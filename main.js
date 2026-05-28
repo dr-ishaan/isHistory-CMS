@@ -79,33 +79,37 @@ class AstroCMSValidator {
    ═══════════════════════════════════════════════════════════ */
 
 class ContentScanner {
-    static async scanContent(app, settings) {
+    static scanContent(app, settings) {
         const contentPath = settings.contentPath || DEFAULT_SETTINGS.contentPath;
         const files = app.vault.getMarkdownFiles();
         const contentFiles = files.filter(f => f.path.startsWith(contentPath));
 
         const results = [];
         for (const file of contentFiles) {
-            const cache = app.metadataCache.getFileCache(file);
-            const fm = cache?.frontmatter || {};
-            const validation = AstroCMSValidator.getStatusForFile(file, app, settings);
+            try {
+                const cache = app.metadataCache.getFileCache(file);
+                const fm = cache?.frontmatter || {};
+                const validation = AstroCMSValidator.getStatusForFile(file, app, settings);
 
-            results.push({
-                file,
-                path: file.path,
-                name: file.basename,
-                title: fm.title || file.basename,
-                description: fm.description || "",
-                status: fm.status || "—",
-                era: fm.era || "—",
-                draft: fm.draft,
-                date: fm.date ? String(fm.date) : "—",
-                tags: Array.isArray(fm.tags) ? fm.tags : [],
-                connects: Array.isArray(fm.connects) ? fm.connects : [],
-                series: fm.series || "",
-                seriesOrder: fm.seriesOrder || "",
-                validation,
-            });
+                results.push({
+                    file,
+                    path: file.path,
+                    name: file.basename,
+                    title: fm.title || file.basename,
+                    description: fm.description || "",
+                    status: fm.status || "—",
+                    era: fm.era || "—",
+                    draft: fm.draft,
+                    date: fm.date ? String(fm.date) : "—",
+                    tags: Array.isArray(fm.tags) ? fm.tags : [],
+                    connects: Array.isArray(fm.connects) ? fm.connects : [],
+                    series: fm.series || "",
+                    seriesOrder: fm.seriesOrder || "",
+                    validation,
+                });
+            } catch (e) {
+                // Skip files that cause errors
+            }
         }
         return results;
     }
@@ -116,7 +120,7 @@ class ContentScanner {
         const drafts = contentItems.filter(i => i.draft === true).length;
         const ready = contentItems.filter(i => i.validation.status === "ready").length;
         const errors = contentItems.filter(i => i.validation.status === "error").length;
-        const warnings = contentFiles = contentItems.filter(i => i.validation.status === "warning").length;
+        const warnings = contentItems.filter(i => i.validation.status === "warning").length;
         const allTags = contentItems.flatMap(i => i.tags);
         const uniqueTags = [...new Set(allTags)];
         const allEras = [...new Set(contentItems.map(i => i.era).filter(e => e && e !== "—"))];
@@ -139,6 +143,7 @@ class AstroCMSDashboardView extends obsidian.ItemView {
         this._updateTimer = null;
         this.currentFilter = "all";
         this.searchQuery = "";
+        this._cachedItems = [];
     }
 
     getViewType() { return VIEW_TYPE_DASHBOARD; }
@@ -151,7 +156,8 @@ class AstroCMSDashboardView extends obsidian.ItemView {
         this.registerEvent(this.app.vault.on("modify", () => this._debouncedUpdate()));
         this.registerEvent(this.app.vault.on("delete", () => this._debouncedUpdate()));
         this.registerEvent(this.app.vault.on("create", () => this._debouncedUpdate()));
-        this.renderDashboard();
+        // Small delay to ensure DOM container is fully ready
+        setTimeout(() => this.renderDashboard(), 50);
     }
 
     _debouncedUpdate() {
@@ -159,120 +165,149 @@ class AstroCMSDashboardView extends obsidian.ItemView {
         this._updateTimer = setTimeout(() => this.renderDashboard(), 400);
     }
 
-    async renderDashboard() {
-        const container = this.containerEl.children[1];
+    _getContainer() {
+        // Use the content container for ItemView
+        return this.containerEl.children[1] || this.containerEl.createDiv();
+    }
+
+    renderDashboard() {
+        let container;
+        try {
+            container = this._getContainer();
+        } catch (e) {
+            console.error("Astro CMS: container not ready", e);
+            return;
+        }
+
         container.empty();
         container.addClass("astro-cms-dashboard");
 
-        const items = await ContentScanner.scanContent(this.app, this.plugin.settings);
-        const stats = ContentScanner.getStats(items);
+        try {
+            this._cachedItems = ContentScanner.scanContent(this.app, this.plugin.settings);
+            const items = this._cachedItems;
+            const stats = ContentScanner.getStats(items);
 
-        // ─── Header ───
-        const header = container.createEl("div", { cls: "cms-dash-header" });
-        header.createEl("h2", { text: "Astro Content Dashboard", cls: "cms-dash-title" });
-        header.createEl("p", { text: "Manage and validate your Astro content folder", cls: "cms-dash-subtitle" });
+            // ─── Header ───
+            const header = container.createEl("div", { cls: "cms-dash-header" });
+            header.createEl("h2", { text: "Astro Content Dashboard", cls: "cms-dash-title" });
+            header.createEl("p", { text: "Manage and validate your Astro content folder", cls: "cms-dash-subtitle" });
 
-        // ─── Stats Row ───
-        const statsRow = container.createEl("div", { cls: "cms-stats-row" });
-        this._renderStatCard(statsRow, "Total Posts", stats.total, "file-text");
-        this._renderStatCard(statsRow, "Published", stats.published, "check-circle", "cms-stat-success");
-        this._renderStatCard(statsRow, "Drafts", stats.drafts, "pencil", "cms-stat-warning");
-        this._renderStatCard(statsRow, "Validation Errors", stats.errors, "alert-circle", "cms-stat-error");
-        this._renderStatCard(statsRow, "Warnings", stats.warnings, "alert-triangle", "cms-stat-warn");
-        this._renderStatCard(statsRow, "Ready", stats.ready, "circle-check-big", "cms-stat-success");
+            // ─── Stats Row ───
+            const statsRow = container.createEl("div", { cls: "cms-stats-row" });
+            this._renderStatCard(statsRow, "Total Posts", stats.total);
+            this._renderStatCard(statsRow, "Published", stats.published, "cms-stat-success");
+            this._renderStatCard(statsRow, "Drafts", stats.drafts, "cms-stat-warning");
+            this._renderStatCard(statsRow, "Errors", stats.errors, "cms-stat-error");
+            this._renderStatCard(statsRow, "Warnings", stats.warnings, "cms-stat-warn");
+            this._renderStatCard(statsRow, "Ready", stats.ready, "cms-stat-success");
 
-        // ─── Toolbar ───
-        const toolbar = container.createEl("div", { cls: "cms-toolbar" });
+            // ─── Toolbar ───
+            const toolbar = container.createEl("div", { cls: "cms-toolbar" });
 
-        // Search
-        const searchWrap = toolbar.createEl("div", { cls: "cms-search-wrap" });
-        searchWrap.createEl("span", { cls: "cms-search-icon", attr: { style: "opacity:0.5" } });
-        const searchInput = searchWrap.createEl("input", {
-            type: "text",
-            placeholder: "Search posts...",
-            cls: "cms-search-input",
-            value: this.searchQuery,
-        });
-        searchInput.on("input", () => {
-            this.searchQuery = searchInput.value;
-            this.renderContentGrid(container, items);
-        });
-
-        // Filter buttons
-        const filterGroup = toolbar.createEl("div", { cls: "cms-filter-group" });
-        const filters = [
-            { key: "all", label: "All" },
-            { key: "ready", label: "Ready" },
-            { key: "error", label: "Errors" },
-            { key: "warning", label: "Warnings" },
-            { key: "draft", label: "Drafts" },
-            { key: "published", label: "Published" },
-        ];
-        for (const f of filters) {
-            const btn = filterGroup.createEl("button", {
-                text: f.label,
-                cls: `cms-filter-btn ${this.currentFilter === f.key ? "cms-filter-btn-active" : ""}`,
+            // Search
+            const searchWrap = toolbar.createEl("div", { cls: "cms-search-wrap" });
+            const searchInput = searchWrap.createEl("input", {
+                type: "text",
+                placeholder: "Search posts...",
+                cls: "cms-search-input",
+                value: this.searchQuery,
             });
-            btn.on("click", () => {
-                this.currentFilter = f.key;
-                this.renderDashboard();
+            searchInput.addEventListener("input", () => {
+                this.searchQuery = searchInput.value;
+                this._renderContentGrid(container, items);
             });
-        }
 
-        // Bulk action
-        const actionsGroup = toolbar.createEl("div", { cls: "cms-actions-group" });
-        const bulkPreflightBtn = actionsGroup.createEl("button", {
-            text: "Bulk Pre-Flight All Drafts",
-            cls: "cms-btn cms-btn-primary",
-        });
-        bulkPreflightBtn.on("click", () => this._bulkPreflight(items));
+            // Filter buttons
+            const filterGroup = toolbar.createEl("div", { cls: "cms-filter-group" });
+            const filters = [
+                { key: "all", label: "All" },
+                { key: "ready", label: "Ready" },
+                { key: "error", label: "Errors" },
+                { key: "warning", label: "Warnings" },
+                { key: "draft", label: "Drafts" },
+                { key: "published", label: "Published" },
+            ];
+            for (const f of filters) {
+                const btn = filterGroup.createEl("button", {
+                    text: f.label,
+                    cls: `cms-filter-btn ${this.currentFilter === f.key ? "cms-filter-btn-active" : ""}`,
+                });
+                btn.addEventListener("click", () => {
+                    this.currentFilter = f.key;
+                    this._renderContentGrid(container, items);
+                });
+            }
 
-        const refreshBtn = actionsGroup.createEl("button", {
-            text: "Refresh",
-            cls: "cms-btn cms-btn-secondary",
-        });
-        refreshBtn.on("click", () => this.renderDashboard());
+            // Bulk action
+            const actionsGroup = toolbar.createEl("div", { cls: "cms-actions-group" });
+            const bulkPreflightBtn = actionsGroup.createEl("button", {
+                text: "Bulk Pre-Flight",
+                cls: "cms-btn cms-btn-primary",
+            });
+            bulkPreflightBtn.addEventListener("click", () => this._bulkPreflight(items));
 
-        // ─── Content Grid ───
-        this.renderContentGrid(container, items);
+            const refreshBtn = actionsGroup.createEl("button", {
+                text: "Refresh",
+                cls: "cms-btn cms-btn-secondary",
+            });
+            refreshBtn.addEventListener("click", () => this.renderDashboard());
 
-        // ─── Tags & Eras Section ───
-        if (stats.uniqueTags.length > 0 || stats.allEras.length > 0) {
-            const metaSection = container.createEl("div", { cls: "cms-meta-section" });
+            // ─── Content Grid ───
+            this._renderContentGrid(container, items);
 
-            if (stats.uniqueTags.length > 0) {
-                const tagSection = metaSection.createEl("div", { cls: "cms-meta-block" });
-                tagSection.createEl("h4", { text: "Tags", cls: "cms-meta-heading" });
-                const tagList = tagSection.createEl("div", { cls: "cms-tag-list" });
-                for (const tag of stats.uniqueTags.sort()) {
-                    const count = items.filter(i => i.tags.includes(tag)).length;
-                    tagList.createEl("span", { text: `${tag} (${count})`, cls: "cms-tag-chip" });
+            // ─── Tags & Eras Section ───
+            if (stats.uniqueTags.length > 0 || stats.allEras.length > 0 || stats.allSeries.length > 0) {
+                const metaSection = container.createEl("div", { cls: "cms-meta-section" });
+
+                if (stats.uniqueTags.length > 0) {
+                    const tagSection = metaSection.createEl("div", { cls: "cms-meta-block" });
+                    tagSection.createEl("h4", { text: `Tags (${stats.uniqueTags.length})`, cls: "cms-meta-heading" });
+                    const tagList = tagSection.createEl("div", { cls: "cms-tag-list" });
+                    for (const tag of stats.uniqueTags.sort()) {
+                        const count = items.filter(i => i.tags.includes(tag)).length;
+                        tagList.createEl("span", { text: `${tag} (${count})`, cls: "cms-tag-chip" });
+                    }
+                }
+
+                if (stats.allEras.length > 0) {
+                    const eraSection = metaSection.createEl("div", { cls: "cms-meta-block" });
+                    eraSection.createEl("h4", { text: `Eras (${stats.allEras.length})`, cls: "cms-meta-heading" });
+                    const eraList = eraSection.createEl("div", { cls: "cms-tag-list" });
+                    for (const era of stats.allEras.sort()) {
+                        const count = items.filter(i => i.era === era).length;
+                        eraList.createEl("span", { text: `${era} (${count})`, cls: "cms-tag-chip cms-era-chip" });
+                    }
+                }
+
+                if (stats.allSeries.length > 0) {
+                    const seriesSection = metaSection.createEl("div", { cls: "cms-meta-block" });
+                    seriesSection.createEl("h4", { text: `Series (${stats.allSeries.length})`, cls: "cms-meta-heading" });
+                    const seriesList = seriesSection.createEl("div", { cls: "cms-tag-list" });
+                    for (const s of stats.allSeries.sort()) {
+                        const count = items.filter(i => i.series === s).length;
+                        seriesList.createEl("span", { text: `${s} (${count})`, cls: "cms-tag-chip cms-series-chip" });
+                    }
                 }
             }
 
-            if (stats.allEras.length > 0) {
-                const eraSection = metaSection.createEl("div", { cls: "cms-meta-block" });
-                eraSection.createEl("h4", { text: "Eras", cls: "cms-meta-heading" });
-                const eraList = eraSection.createEl("div", { cls: "cms-tag-list" });
-                for (const era of stats.allEras.sort()) {
-                    const count = items.filter(i => i.era === era).length;
-                    eraList.createEl("span", { text: `${era} (${count})`, cls: "cms-tag-chip cms-era-chip" });
-                }
+            // No content message
+            if (items.length === 0) {
+                const empty = container.createEl("div", { cls: "cms-empty-state" });
+                empty.createEl("div", { text: "No posts found in " + this.plugin.settings.contentPath, cls: "cms-empty-title" });
+                empty.createEl("div", { text: "Make sure your Astro content folder is inside your Obsidian vault.", cls: "cms-empty-desc" });
             }
 
-            if (stats.allSeries.length > 0) {
-                const seriesSection = metaSection.createEl("div", { cls: "cms-meta-block" });
-                seriesSection.createEl("h4", { text: "Series", cls: "cms-meta-heading" });
-                const seriesList = seriesSection.createEl("div", { cls: "cms-tag-list" });
-                for (const s of stats.allSeries.sort()) {
-                    const count = items.filter(i => i.series === s).length;
-                    seriesList.createEl("span", { text: `${s} (${count})`, cls: "cms-tag-chip cms-series-chip" });
-                }
-            }
+        } catch (e) {
+            console.error("Astro CMS Dashboard render error:", e);
+            container.empty();
+            const errorEl = container.createEl("div", { cls: "cms-error-display" });
+            errorEl.createEl("h3", { text: "Dashboard Error" });
+            errorEl.createEl("p", { text: e.message || "An unknown error occurred." });
+            errorEl.createEl("pre", { text: e.stack || "" });
         }
     }
 
-    renderContentGrid(container, items) {
+    _renderContentGrid(container, items) {
         let existing = container.querySelector(".cms-content-grid");
         if (existing) existing.remove();
 
@@ -356,18 +391,18 @@ class AstroCMSDashboardView extends obsidian.ItemView {
         // Card actions
         const cardActions = card.createEl("div", { cls: "cms-card-actions" });
         const openBtn = cardActions.createEl("button", { text: "Open", cls: "cms-btn cms-btn-sm" });
-        openBtn.on("click", () => this.app.workspace.getLeaf(false).openFile(item.file));
+        openBtn.addEventListener("click", () => this.app.workspace.getLeaf(false).openFile(item.file));
 
         if (item.draft === true) {
             const preflightBtn = cardActions.createEl("button", { text: "Pre-Flight", cls: "cms-btn cms-btn-sm cms-btn-primary" });
-            preflightBtn.on("click", () => this._preflightSingle(item.file));
+            preflightBtn.addEventListener("click", () => this._preflightSingle(item.file));
         }
 
         const validateBtn = cardActions.createEl("button", { text: "Validate", cls: "cms-btn cms-btn-sm cms-btn-secondary" });
-        validateBtn.on("click", () => this._validateSingle(item.file));
+        validateBtn.addEventListener("click", () => this._validateSingle(item.file));
     }
 
-    _renderStatCard(row, label, value, icon, colorClass) {
+    _renderStatCard(row, label, value, colorClass) {
         const card = row.createEl("div", { cls: `cms-stat-card ${colorClass || ""}` });
         card.createEl("div", { text: String(value), cls: "cms-stat-value" });
         card.createEl("div", { text: label, cls: "cms-stat-label" });
@@ -441,8 +476,8 @@ class AstroCMSDashboardView extends obsidian.ItemView {
             modal.titleEl.setText(title);
             modal.contentEl.createEl("p", { text: message });
             const btnRow = modal.contentEl.createEl("div", { cls: "cms-modal-btn-row" });
-            btnRow.createEl("button", { text: "Cancel", cls: "cms-btn cms-btn-secondary" }).on("click", () => { modal.close(); resolve(false); });
-            btnRow.createEl("button", { text: "Confirm", cls: "cms-btn cms-btn-primary" }).on("click", () => { modal.close(); resolve(true); });
+            btnRow.createEl("button", { text: "Cancel", cls: "cms-btn cms-btn-secondary" }).addEventListener("click", () => { modal.close(); resolve(false); });
+            btnRow.createEl("button", { text: "Confirm", cls: "cms-btn cms-btn-primary" }).addEventListener("click", () => { modal.close(); resolve(true); });
             modal.open();
         });
     }
@@ -472,7 +507,7 @@ class AstroCMSSidebarView extends obsidian.ItemView {
     async onOpen() {
         this.registerEvent(this.app.workspace.on("active-file-change", () => this._debouncedUpdate()));
         this.registerEvent(this.app.metadataCache.on("changed", () => this._debouncedUpdate()));
-        this.updateUI();
+        setTimeout(() => this.updateUI(), 50);
     }
 
     _debouncedUpdate() {
@@ -482,6 +517,7 @@ class AstroCMSSidebarView extends obsidian.ItemView {
 
     updateUI() {
         const container = this.containerEl.children[1];
+        if (!container) return;
         container.empty();
         container.addClass("astro-cms-sidebar");
         const activeFile = this.app.workspace.getActiveFile();
@@ -521,7 +557,7 @@ class AstroCMSSidebarView extends obsidian.ItemView {
         // Quick actions
         const actions = container.createEl("div", { cls: "cms-sidebar-actions" });
         const preflightBtn = actions.createEl("button", { text: "Pre-Flight This Post", cls: "cms-btn cms-btn-primary cms-btn-full" });
-        preflightBtn.on("click", async () => {
+        preflightBtn.addEventListener("click", async () => {
             try {
                 await this.app.fileManager.processFrontMatter(activeFile, (fm) => {
                     fm["draft"] = false;
@@ -536,7 +572,7 @@ class AstroCMSSidebarView extends obsidian.ItemView {
         });
 
         const dashBtn = actions.createEl("button", { text: "Open Dashboard", cls: "cms-btn cms-btn-secondary cms-btn-full" });
-        dashBtn.on("click", () => this.plugin.activateDashboard());
+        dashBtn.addEventListener("click", () => this.plugin.activateDashboard());
     }
 
     async onClose() {
@@ -643,7 +679,7 @@ module.exports = class AstroCMSPlugin extends obsidian.Plugin {
         this.registerView(VIEW_TYPE_SIDEBAR, (leaf) => new AstroCMSSidebarView(leaf, this));
 
         // Ribbon icon
-        this._ribbonIcon = this.addRibbonIcon("layout-dashboard", "Astro CMS Dashboard", () => this.activateDashboard());
+        this.addRibbonIcon("layout-dashboard", "Astro CMS Dashboard", () => this.activateDashboard());
 
         // Commands
         this.addCommand({
@@ -680,35 +716,34 @@ module.exports = class AstroCMSPlugin extends obsidian.Plugin {
         this.addSettingTab(new AstroCMSSettingTab(this.app, this));
 
         // Graph link injection (debounced, guarded)
-        if (this.settings.autoSyncGraph) {
-            this._linkQueue = new Map();
-            this._linkTimer = null;
+        this._linkQueue = new Map();
+        this._linkTimer = null;
 
-            this.registerEvent(
-                this.app.metadataCache.on("changed", (file) => {
-                    if (!file.path.startsWith(this.settings.contentPath)) return;
-                    const cache = this.app.metadataCache.getFileCache(file);
-                    if (!cache || !cache.frontmatter) return;
+        this.registerEvent(
+            this.app.metadataCache.on("changed", (file) => {
+                if (!this.settings.autoSyncGraph) return;
+                if (!file.path.startsWith(this.settings.contentPath)) return;
+                const cache = this.app.metadataCache.getFileCache(file);
+                if (!cache || !cache.frontmatter) return;
 
-                    const fm = cache.frontmatter;
-                    const dynamicLinks = [];
+                const fm = cache.frontmatter;
+                const dynamicLinks = [];
 
-                    if (Array.isArray(fm["connects"])) {
-                        dynamicLinks.push(...fm["connects"]);
-                    } else if (typeof fm["connects"] === "string") {
-                        dynamicLinks.push(...fm["connects"].split(",").map(s => s.trim()));
-                    }
+                if (Array.isArray(fm["connects"])) {
+                    dynamicLinks.push(...fm["connects"]);
+                } else if (typeof fm["connects"] === "string") {
+                    dynamicLinks.push(...fm["connects"].split(",").map(s => s.trim()));
+                }
 
-                    if (fm["series"]) dynamicLinks.push(String(fm["series"]));
-                    if (fm["era"]) dynamicLinks.push(String(fm["era"]));
+                if (fm["series"]) dynamicLinks.push(String(fm["series"]));
+                if (fm["era"]) dynamicLinks.push(String(fm["era"]));
 
-                    if (dynamicLinks.length === 0) return;
+                if (dynamicLinks.length === 0) return;
 
-                    this._linkQueue.set(file.path, { file, dynamicLinks });
-                    this._scheduleLinkInjection();
-                })
-            );
-        }
+                this._linkQueue.set(file.path, { file, dynamicLinks });
+                this._scheduleLinkInjection();
+            })
+        );
 
         console.log("Astro CMS Plugin loaded");
     }
@@ -815,7 +850,7 @@ module.exports = class AstroCMSPlugin extends obsidian.Plugin {
     }
 
     async bulkPreflight() {
-        const items = await ContentScanner.scanContent(this.app, this.settings);
+        const items = ContentScanner.scanContent(this.app, this.settings);
         const drafts = items.filter(i => i.draft === true);
         if (drafts.length === 0) {
             new obsidian.Notice("No drafts to pre-flight.");

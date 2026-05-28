@@ -140,6 +140,20 @@
     text-align: center; padding: 40px 20px; color: var(--text-muted);
     font-style: italic; font-size: 0.95em; grid-column: 1 / -1;
 }
+.cms-empty-title { font-size: 1.1em; font-weight: 600; color: var(--text-normal); margin-bottom: 8px; font-style: normal; }
+.cms-empty-desc { font-size: 0.88em; }
+
+/* ─── Error Display ─── */
+.cms-error-display {
+    padding: 24px; text-align: center;
+}
+.cms-error-display h3 { color: #ef4444; margin-bottom: 12px; }
+.cms-error-display p { color: var(--text-muted); margin-bottom: 12px; }
+.cms-error-display pre {
+    text-align: left; padding: 12px; border-radius: 8px; font-size: 0.78em;
+    background: var(--background-secondary); color: var(--text-muted);
+    overflow-x: auto; max-height: 200px;
+}
 
 /* ─── Confirm Modal ─── */
 .cms-modal-btn-row { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
