@@ -40,22 +40,31 @@ class AstroCMSValidator {
 const VIEW_TYPE_ASTRO_CMS = "astro-cms-sidebar-view";
 
 class AstroCMSView extends obsidian.ItemView {
-    constructor(leaf) { super(leaf); }
+    constructor(leaf) {
+        super(leaf);
+        this._updateTimer = null;
+    }
+
     getViewType() { return VIEW_TYPE_ASTRO_CMS; }
     getDisplayText() { return "Astro CMS Diagnostics"; }
     getIcon() { return "layout-list"; }
 
     async onOpen() {
-        this.registerEvent(this.app.workspace.on("active-file-change", () => this.updateUI()));
-        this.registerEvent(this.app.metadataCache.on("changed", () => this.updateUI()));
+        this.registerEvent(this.app.workspace.on("active-file-change", () => this._debouncedUpdate()));
+        this.registerEvent(this.app.metadataCache.on("changed", () => this._debouncedUpdate()));
         this.updateUI();
+    }
+
+    _debouncedUpdate() {
+        if (this._updateTimer) clearTimeout(this._updateTimer);
+        this._updateTimer = setTimeout(() => this.updateUI(), 300);
     }
 
     updateUI() {
         const container = this.containerEl.children[1];
         container.empty();
         const activeFile = this.app.workspace.getActiveFile();
-        
+
         if (!activeFile || activeFile.extension !== "md" || !activeFile.path.startsWith("src/content")) {
             container.createEl("div", { text: "Select a post inside src/content to analyze.", cls: "cms-sidebar-empty-state" });
             return;
@@ -67,7 +76,7 @@ class AstroCMSView extends obsidian.ItemView {
         const cache = this.app.metadataCache.getFileCache(activeFile);
         const errors = AstroCMSValidator.validate(cache?.frontmatter);
         const statusWrapper = container.createEl("div", { cls: "cms-status-wrapper" });
-        
+
         if (errors.length === 0) {
             statusWrapper.createEl("span", { text: "✓ Ready for GitHub", cls: "cms-badge cms-badge-success" });
         } else if (errors.some(e => e.severity === "error")) {
@@ -102,8 +111,12 @@ module.exports = class AstroCMSPlugin extends obsidian.Plugin {
             callback: () => this.executePreflight()
         });
 
+        // Graph link injection — debounced & guarded to prevent infinite loops
+        this._linkInjectionQueue = new Map();
+        this._linkInjectionTimer = null;
+
         this.registerEvent(
-            this.app.metadataCache.on("resolve", (file) => {
+            this.app.metadataCache.on("changed", (file) => {
                 if (!file.path.startsWith("src/content")) return;
                 const cache = this.app.metadataCache.getFileCache(file);
                 if (!cache || !cache.frontmatter) return;
@@ -121,8 +134,36 @@ module.exports = class AstroCMSPlugin extends obsidian.Plugin {
                 if (fm["era"]) dynamicLinks.push(String(fm["era"]));
 
                 if (dynamicLinks.length === 0) return;
+
+                // Queue file for batch processing instead of mutating cache immediately
+                this._linkInjectionQueue.set(file.path, { file, dynamicLinks });
+                this._scheduleLinkInjection();
+            })
+        );
+    }
+
+    _scheduleLinkInjection() {
+        if (this._linkInjectionTimer) clearTimeout(this._linkInjectionTimer);
+        this._linkInjectionTimer = setTimeout(() => this._processLinkQueue(), 500);
+    }
+
+    _processLinkQueue() {
+        if (this._linkInjectionQueue.size === 0) return;
+
+        const processed = new Set();
+
+        for (const [path, { file, dynamicLinks }] of this._linkInjectionQueue) {
+            // Guard: only process each file once per cycle
+            if (processed.has(path)) continue;
+            processed.add(path);
+
+            try {
+                const cache = this.app.metadataCache.getFileCache(file);
+                if (!cache) continue;
+
                 if (!cache.links) cache.links = [];
 
+                let added = false;
                 for (const dest of dynamicLinks) {
                     if (dest && !cache.links.some(l => l.link === dest)) {
                         cache.links.push({
@@ -131,13 +172,27 @@ module.exports = class AstroCMSPlugin extends obsidian.Plugin {
                             displayText: dest,
                             position: { start: { line: 0, col: 0, offset: 0 }, end: { line: 0, col: 0, offset: 0 } }
                         });
+                        added = true;
                     }
                 }
-            })
-        );
+
+                // If no new links were actually added, this file is stable — skip next cycle
+                if (!added) {
+                    this._linkInjectionQueue.delete(path);
+                }
+            } catch (e) {
+                // Safely skip files that cause errors
+                this._linkInjectionQueue.delete(path);
+            }
+        }
+
+        this._linkInjectionQueue.clear();
     }
 
-    async onunload() { this.app.workspace.detachLeavesOfType(VIEW_TYPE_ASTRO_CMS); }
+    async onunload() {
+        if (this._linkInjectionTimer) clearTimeout(this._linkInjectionTimer);
+        this.app.workspace.detachLeavesOfType(VIEW_TYPE_ASTRO_CMS);
+    }
 
     async activateView() {
         const { workspace } = this.app;
@@ -161,4 +216,3 @@ module.exports = class AstroCMSPlugin extends obsidian.Plugin {
         } catch (e) {}
     }
 };
-                                                     
