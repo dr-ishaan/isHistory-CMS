@@ -1,7 +1,7 @@
 const obsidian = require('obsidian');
 
 /* ═════════════════════════════════════════════════════════════════════════
-   isHistory CMS Plugin v1.0.0
+   isHistory CMS Plugin v1
    
    Custom-built CMS for the isHistory Astro project.
    Manages TWO content collections:
@@ -637,6 +637,8 @@ class IsHistoryDashboardView extends obsidian.ItemView {
             const badgeArea = cardHeader.createEl("div", { cls: "cms-card-badges" });
             if (item.track && TRACKS[item.track]) {
                 badgeArea.createEl("span", { text: `${TRACKS[item.track].emoji} ${TRACKS[item.track].name}`, cls: "cms-badge cms-badge-track" });
+            } else if (item.track) {
+                badgeArea.createEl("span", { text: "\u2753 Custom Track", cls: "cms-badge cms-badge-track" });
             }
             badgeArea.createEl("span", { text: item.validation.label, cls: `cms-badge cms-badge-${item.validation.status === "ready" ? "success" : item.validation.status === "error" ? "error" : "warning"}` });
 
