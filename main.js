@@ -1,7 +1,7 @@
 const obsidian = require('obsidian');
 
 /* ═════════════════════════════════════════════════════════════════════════
-   isHistory CMS Plugin v1
+   isHistory CMS Plugin v1.0.0
    
    Custom-built CMS for the isHistory Astro project.
    Manages TWO content collections:
@@ -731,7 +731,7 @@ class IsHistoryDashboardView extends obsidian.ItemView {
                     const existingOrders = this.plugin.cache.getSortedItems("archive")
                         .filter(i => i.track === code && i.seriesOrder)
                         .map(i => { const m = i.seriesOrder.match(/^[APE](\d+)$/); return m ? parseInt(m[1], 10) : 0; });
-                    let nextNum = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 1;
+                    const nextNum = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 1;
                     const seriesOrder = `${code}${nextNum}`;
                     let slug = `${seriesOrder}-untitled-post`;
                     let path = `${this.plugin.settings.archivePath}/${slug}.md`;
@@ -1090,7 +1090,7 @@ module.exports = class IsHistoryPlugin extends obsidian.Plugin {
             const existingOrders = this.cache.getSortedItems("archive")
                 .filter(i => i.track === track && i.seriesOrder)
                 .map(i => { const m = i.seriesOrder.match(/^[APE](\d+)$/); return m ? parseInt(m[1], 10) : 0; });
-            let nextNum = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 1;
+            const nextNum = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 1;
             const seriesOrder = `${track}${nextNum}`;
             let slug = `${seriesOrder}-untitled-post`;
             let path = `${this.settings.archivePath}/${slug}.md`;

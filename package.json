@@ -1,0 +1,25 @@
+{
+  "name": "astro-cms-obsidian-plugin",
+  "version": "1.0.0",
+  "description": "> **Your Astro website's control panel — inside Obsidian.**",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dr-ishaan/astro-cms-obsidian-plugin.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/dr-ishaan/astro-cms-obsidian-plugin/issues"
+  },
+  "homepage": "https://github.com/dr-ishaan/astro-cms-obsidian-plugin#readme",
+  "devDependencies": {
+    "eslint": "^8.57.1",
+    "eslint-plugin-obsidian": "^2.31.0"
+  }
+}
