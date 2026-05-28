@@ -1,7 +1,7 @@
 const obsidian = require('obsidian');
 
 /* ═════════════════════════════════════════════════════════════════════════
-   isHistory CMS Plugin v1.0.1
+   isHistory CMS Plugin v1.0.0
    
    Custom-built CMS for the isHistory Astro project.
    Manages TWO content collections:
