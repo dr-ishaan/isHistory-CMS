@@ -1,9 +1,9 @@
 {
   "id": "astro-cms-obsidian-plugin",
-  "name": "Astro Content Graph CMS",
-  "version": "2.2.1",
+  "name": "isHistory CMS",
+  "version": "3.0.0",
   "minAppVersion": "1.0.0",
-  "description": "Full dashboard, validation, content management, graph syncing, and pre-flight publishing for Astro content folders.",
+  "description": "Custom CMS for isHistory — manages archive & vault collections with schema validation, track-based organization, and publish workflows.",
   "author": "Ishhan",
   "isDesktopOnly": false
 }
