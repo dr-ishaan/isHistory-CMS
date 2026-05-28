@@ -4,6 +4,8 @@
   "description": "> **Your Astro website's control panel — inside Obsidian.**",
   "main": "main.js",
   "scripts": {
+    "build": "node build.mjs",
+    "lint": "eslint main.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
