@@ -1,7 +1,7 @@
 const obsidian = require('obsidian');
 
 /* ═════════════════════════════════════════════════════════════════════════
-   isHistory CMS Plugin v3.0.0
+   isHistory CMS Plugin v3.0.1
    
    Custom-built CMS for the isHistory Astro project.
    Manages TWO content collections:
@@ -36,7 +36,7 @@ const VAULT_REQUIRED = ["title"];
 
 /* ─── Settings ─── */
 
-const SETTINGS_VERSION = 5;
+const SETTINGS_VERSION = 6;
 
 const DEFAULT_SETTINGS = {
     _version: SETTINGS_VERSION,
@@ -53,7 +53,7 @@ function migrateSettings(loaded) {
         // Reset to new defaults, preserve nothing from generic plugin
         loaded.archivePath = loaded.archivePath || DEFAULT_SETTINGS.archivePath;
         loaded.vaultPath = loaded.vaultPath || DEFAULT_SETTINGS.vaultPath;
-        loaded.cardsPerPage = loaded.cardsPerPage || DEFAULT_SETTINGS.cardsPerPage;
+        loaded.cardsPerPage = (loaded.cardsPerPage !== undefined && loaded.cardsPerPage !== null) ? loaded.cardsPerPage : DEFAULT_SETTINGS.cardsPerPage;
         loaded.showRibbonIcon = loaded.showRibbonIcon !== undefined ? loaded.showRibbonIcon : true;
         // Remove old keys
         delete loaded.contentPath;
@@ -61,6 +61,12 @@ function migrateSettings(loaded) {
         delete loaded.validateDraft;
         delete loaded.validateDate;
         delete loaded.autoSyncGraph;
+    }
+    if (version < 6) {
+        // v6: fix cardsPerPage falsy-value bug (0 was treated as missing)
+        if (!loaded.cardsPerPage || typeof loaded.cardsPerPage !== "number") {
+            loaded.cardsPerPage = DEFAULT_SETTINGS.cardsPerPage;
+        }
     }
     loaded._version = SETTINGS_VERSION;
     return loaded;
@@ -285,13 +291,10 @@ class ContentCache {
                 if (!currentPaths.has(path)) { this.items.delete(path); this._statsDirty = true; }
             }
             for (const file of contentFiles) {
-                const existing = this.items.get(file.path);
-                if (!existing || existing.file !== file) {
-                    const item = this._buildItem(file, app, settings);
-                    if (item) { this.items.set(file.path, item); this._statsDirty = true; }
-                }
+                // Always rebuild items to pick up content changes (not just file reference changes)
+                const item = this._buildItem(file, app, settings);
+                if (item) { this.items.set(file.path, item); this._statsDirty = true; }
             }
-            this._statsDirty = true;
         } catch (e) { console.error("isHistory CMS: scanAll failed", e); }
     }
 
@@ -352,10 +355,20 @@ class ContentCache {
         const items = [...this.items.values()];
         const filtered = collection ? items.filter(i => i.collection === collection) : items;
         return filtered.sort((a, b) => {
-            // Sort by seriesOrder if available, then path
+            // Sort by seriesOrder if available (track then numeric), then path
             const ao = a.seriesOrder || "";
             const bo = b.seriesOrder || "";
-            if (ao && bo) return ao.localeCompare(bo);
+            if (ao && bo) {
+                // Parse seriesOrder into track letter + numeric part for correct ordering
+                const parseOrder = (s) => { const m = s.match(/^([APE])(\d+)$/); return m ? { track: m[1], num: parseInt(m[2], 10) } : null; };
+                const pa = parseOrder(ao);
+                const pb = parseOrder(bo);
+                if (pa && pb) {
+                    if (pa.track !== pb.track) return pa.track.localeCompare(pb.track);
+                    return pa.num - pb.num;
+                }
+                return ao.localeCompare(bo);
+            }
             if (ao) return -1;
             if (bo) return 1;
             return a.path.localeCompare(b.path);
@@ -489,10 +502,14 @@ class IsHistoryDashboardView extends obsidian.ItemView {
         const paths = new Set(this._pendingPaths); this._pendingPaths.clear();
         for (const path of paths) {
             try {
-                const item = this.plugin.cache.items.get(path);
-                if (item) {
-                    const file = this.app.vault.getAbstractFileByPath(path);
-                    if (file && file.extension === "md") this.plugin.cache.updateFile(file, this.app, this.plugin.settings);
+                const file = this.app.vault.getAbstractFileByPath(path);
+                if (file && file.extension === "md" && this.plugin.cache.isInCollection(path, this.plugin.settings)) {
+                    // Always try to update — file may be newly created and not yet in cache
+                    this.plugin.cache.updateFile(file, this.app, this.plugin.settings);
+                }
+                // If file no longer exists (deleted), make sure it's removed from cache
+                if (!file && this.plugin.cache.items.has(path)) {
+                    this.plugin.cache.removeFile(path);
                 }
             } catch (e) { console.error(e); }
         }
@@ -602,7 +619,6 @@ class IsHistoryDashboardView extends obsidian.ItemView {
     _createCardElement(item) {
         if (!this._gridEl) return null;
         try {
-            const trackInfo = item.track ? TRACKS[item.track] : null;
             const card = this._gridEl.createEl("div", {
                 cls: `cms-card cms-card-${item.validation.status} cms-card-${item.collection}${item.track ? " cms-card-track-" + item.track : ""}`,
                 attr: { "data-path": item.path, "data-collection": item.collection, "data-track": item.track || "", "data-validation": item.validation.status, "data-draft": String(item.draft), "data-status": item.status },
@@ -688,7 +704,10 @@ class IsHistoryDashboardView extends obsidian.ItemView {
             await this.app.fileManager.processFrontMatter(file, (fm) => {
                 fm.draft = false;
                 fm.status = "published";
-                fm.date = new Date().toISOString().split('T')[0];
+                // Only set date to today if no date is already specified
+                if (!fm.date) {
+                    fm.date = new Date().toISOString().split('T')[0];
+                }
             });
             new obsidian.Notice(`Published: ${file.basename}`);
         } catch (e) { new obsidian.Notice(`Publish failed: ${e.message}`); }
@@ -705,10 +724,21 @@ class IsHistoryDashboardView extends obsidian.ItemView {
                 const btn = body.createEl("button", { text: `${info.emoji} ${info.name} (${code})`, cls: "cms-btn cms-btn-track-btn" });
                 btn.addEventListener("click", async () => {
                     trackModal.close();
-                    const count = this.plugin.cache.getSortedItems("archive").filter(i => i.track === code).length + 1;
-                    const seriesOrder = `${code}${count}`;
-                    const slug = `${seriesOrder}-untitled-post`;
-                    const path = `${this.plugin.settings.archivePath}/${slug}.md`;
+                    // Find the next available seriesOrder number (avoid collisions with deleted posts)
+                    const existingOrders = this.plugin.cache.getSortedItems("archive")
+                        .filter(i => i.track === code && i.seriesOrder)
+                        .map(i => { const m = i.seriesOrder.match(/^[APE](\d+)$/); return m ? parseInt(m[1], 10) : 0; });
+                    let nextNum = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 1;
+                    const seriesOrder = `${code}${nextNum}`;
+                    let slug = `${seriesOrder}-untitled-post`;
+                    let path = `${this.plugin.settings.archivePath}/${slug}.md`;
+                    // Avoid file path collision by appending suffix if file already exists
+                    let suffix = 0;
+                    while (this.app.vault.getAbstractFileByPath(path)) {
+                        suffix++;
+                        slug = `${seriesOrder}-untitled-post-${suffix}`;
+                        path = `${this.plugin.settings.archivePath}/${slug}.md`;
+                    }
 
                     const content = `---\ntitle: "Untitled ${info.name} Post"\ndate: ${new Date().toISOString().split('T')[0]}\ndescription: ""\ndraft: true\ntags: []\nimage: "/images/${seriesOrder.toLowerCase()}-hero.jpg"\nseries: "minds-and-machines"\nseriesOrder: "${seriesOrder}"\ntrack: "${code}"\nstatus: "planned"\npart: ""\nfigures: ""\nconnects: ""\nera: ""\naliases: ["${seriesOrder}"]\n---\n\nStart writing here...\n`;
 
@@ -885,10 +915,10 @@ class IsHistorySettingTab extends obsidian.PluginSettingTab {
         containerEl.createEl("h3", { text: "Content Paths" });
         new obsidian.Setting(containerEl).setName("Archive path").setDesc("Path to blog/archive content (default: src/content/blog)")
             .addText(text => text.setPlaceholder("src/content/blog").setValue(this.plugin.settings.archivePath)
-                .onChange(async (v) => { this.plugin.settings.archivePath = v; await this.plugin.saveSettings(); }));
+                .onChange(async (v) => { this.plugin.settings.archivePath = v; await this.plugin.saveSettings(); this.plugin.rescanCache(); }));
         new obsidian.Setting(containerEl).setName("Vault path").setDesc("Path to vault/research content (default: src/content/vault)")
             .addText(text => text.setPlaceholder("src/content/vault").setValue(this.plugin.settings.vaultPath)
-                .onChange(async (v) => { this.plugin.settings.vaultPath = v; await this.plugin.saveSettings(); }));
+                .onChange(async (v) => { this.plugin.settings.vaultPath = v; await this.plugin.saveSettings(); this.plugin.rescanCache(); }));
 
         containerEl.createEl("h3", { text: "Performance" });
         new obsidian.Setting(containerEl).setName("Cards per page").setDesc("Number of cards before 'Load More'")
@@ -897,7 +927,11 @@ class IsHistorySettingTab extends obsidian.PluginSettingTab {
 
         containerEl.createEl("h3", { text: "Appearance" });
         new obsidian.Setting(containerEl).setName("Show ribbon icon").setDesc("Show isHistory icon in the left ribbon")
-            .addToggle(toggle => toggle.setValue(this.plugin.settings.showRibbonIcon).onChange(async (v) => { this.plugin.settings.showRibbonIcon = v; await this.plugin.saveSettings(); }));
+            .addToggle(toggle => toggle.setValue(this.plugin.settings.showRibbonIcon).onChange(async (v) => {
+                this.plugin.settings.showRibbonIcon = v;
+                await this.plugin.saveSettings();
+                this.plugin.updateRibbonIcon();
+            }));
 
         containerEl.createEl("div", { cls: "cms-settings-version" }).innerHTML =
             `isHistory CMS v${this.plugin.manifest.version} &middot; Schema v${this.plugin.settings._version}`;
@@ -917,7 +951,11 @@ module.exports = class IsHistoryPlugin extends obsidian.Plugin {
             this.registerView(VIEW_TYPE_DASHBOARD, (leaf) => new IsHistoryDashboardView(leaf, this));
             this.registerView(VIEW_TYPE_SIDEBAR, (leaf) => new IsHistorySidebarView(leaf, this));
 
-            this.addRibbonIcon("book-open", "isHistory CMS", () => this.activateDashboard());
+            if (this.settings.showRibbonIcon) {
+                this._ribbonIcon = this.addRibbonIcon("book-open", "isHistory CMS", () => this.activateDashboard());
+            } else {
+                this._ribbonIcon = null;
+            }
 
             this.addCommand({ id: "open-dashboard", name: "Open isHistory Dashboard", callback: () => this.activateDashboard() });
             this.addCommand({ id: "open-sidebar", name: "Open Quick Validate", callback: () => this.activateSidebar() });
@@ -927,6 +965,7 @@ module.exports = class IsHistoryPlugin extends obsidian.Plugin {
             this.addCommand({ id: "new-profile", name: "New Profile (P-track)", callback: () => this.newPost("P") });
             this.addCommand({ id: "new-event", name: "New Event (E-track)", callback: () => this.newPost("E") });
             this.addCommand({ id: "bulk-validate", name: "Validate All Content", callback: () => this.bulkValidate() });
+            this.addCommand({ id: "bulk-preflight", name: "Bulk Pre-Flight All Drafts", callback: () => this.bulkPreFlight() });
 
             this.addSettingTab(new IsHistorySettingTab(this.app, this));
 
@@ -955,6 +994,33 @@ module.exports = class IsHistoryPlugin extends obsidian.Plugin {
     }
 
     async saveSettings() { try { await this.saveData(this.settings); } catch (e) {} }
+
+    rescanCache() {
+        try {
+            this.cache.scanAll(this.app, this.settings);
+            // Refresh dashboard if open
+            const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD);
+            for (const leaf of leaves) {
+                if (leaf.view instanceof IsHistoryDashboardView) {
+                    leaf.view.renderDashboard();
+                }
+            }
+        } catch (e) { console.error("isHistory CMS: rescanCache failed", e); }
+    }
+
+    updateRibbonIcon() {
+        try {
+            // Remove existing ribbon icon if present
+            if (this._ribbonIcon) {
+                this._ribbonIcon.remove();
+                this._ribbonIcon = null;
+            }
+            // Add ribbon icon if setting is enabled
+            if (this.settings.showRibbonIcon) {
+                this._ribbonIcon = this.addRibbonIcon("book-open", "isHistory CMS", () => this.activateDashboard());
+            }
+        } catch (e) { console.error("isHistory CMS: updateRibbonIcon failed", e); }
+    }
 
     async activateDashboard() {
         try {
@@ -987,8 +1053,12 @@ module.exports = class IsHistoryPlugin extends obsidian.Plugin {
     async publishCurrent() {
         try {
             const file = this.app.workspace.getActiveFile();
-            if (!file || !file.path.startsWith(this.settings.archivePath)) { new obsidian.Notice("Open an archive file first."); return; }
-            await this.app.fileManager.processFrontMatter(file, (fm) => { fm.draft = false; fm.status = "published"; fm.date = new Date().toISOString().split('T')[0]; });
+            if (!file || !this.cache.isInCollection(file.path, this.settings)) { new obsidian.Notice("Open an archive or vault file first."); return; }
+            await this.app.fileManager.processFrontMatter(file, (fm) => {
+                fm.draft = false;
+                fm.status = "published";
+                if (!fm.date) { fm.date = new Date().toISOString().split('T')[0]; }
+            });
             new obsidian.Notice(`Published: ${file.basename}`);
         } catch (e) { new obsidian.Notice(`Failed: ${e.message}`); }
     }
@@ -996,10 +1066,21 @@ module.exports = class IsHistoryPlugin extends obsidian.Plugin {
     async newPost(track) {
         try {
             const info = TRACKS[track];
-            const count = this.cache.getSortedItems("archive").filter(i => i.track === track).length + 1;
-            const seriesOrder = `${track}${count}`;
-            const slug = `${seriesOrder}-untitled-post`;
-            const path = `${this.settings.archivePath}/${slug}.md`;
+            // Find the next available seriesOrder number (avoid collisions with deleted posts)
+            const existingOrders = this.cache.getSortedItems("archive")
+                .filter(i => i.track === track && i.seriesOrder)
+                .map(i => { const m = i.seriesOrder.match(/^[APE](\d+)$/); return m ? parseInt(m[1], 10) : 0; });
+            let nextNum = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 1;
+            const seriesOrder = `${track}${nextNum}`;
+            let slug = `${seriesOrder}-untitled-post`;
+            let path = `${this.settings.archivePath}/${slug}.md`;
+            // Avoid file path collision
+            let suffix = 0;
+            while (this.app.vault.getAbstractFileByPath(path)) {
+                suffix++;
+                slug = `${seriesOrder}-untitled-post-${suffix}`;
+                path = `${this.settings.archivePath}/${slug}.md`;
+            }
             const content = `---\ntitle: "Untitled ${info.name} Post"\ndate: ${new Date().toISOString().split('T')[0]}\ndescription: ""\ndraft: true\ntags: []\nimage: "/images/${seriesOrder.toLowerCase()}-hero.jpg"\nseries: "minds-and-machines"\nseriesOrder: "${seriesOrder}"\ntrack: "${track}"\nstatus: "planned"\npart: ""\nfigures: ""\nconnects: ""\nera: ""\naliases: ["${seriesOrder}"]\n---\n\nStart writing here...\n`;
             await this.app.vault.create(path, content);
             const file = this.app.vault.getAbstractFileByPath(path);
@@ -1017,5 +1098,36 @@ module.exports = class IsHistoryPlugin extends obsidian.Plugin {
             const ready = items.filter(i => i.validation.status === "ready").length;
             new obsidian.Notice(`${items.length} posts: ${ready} ready, ${errors} errors, ${warnings} warnings`);
         } catch (e) { new obsidian.Notice(`Bulk validate failed: ${e.message}`); }
+    }
+
+    async bulkPreFlight() {
+        try {
+            this.cache.scanAll(this.app, this.settings);
+            const drafts = this.cache.getSortedItems("archive").filter(i => i.draft);
+            if (drafts.length === 0) { new obsidian.Notice("No drafts to publish."); return; }
+            const confirmed = await new Promise((resolve) => {
+                const modal = new obsidian.Modal(this.app);
+                modal.titleEl.setText(`Publish ${drafts.length} draft(s)?`);
+                const body = modal.contentEl.createEl("div");
+                body.createEl("p", { text: `This will set ${drafts.length} draft(s) to draft:false, status:"published". Continue?` });
+                const btnRow = body.createEl("div", { cls: "cms-modal-btn-row" });
+                btnRow.createEl("button", { text: "Cancel", cls: "cms-btn cms-btn-secondary" }).addEventListener("click", () => { modal.close(); resolve(false); });
+                btnRow.createEl("button", { text: "Publish All", cls: "cms-btn cms-btn-primary" }).addEventListener("click", () => { modal.close(); resolve(true); });
+                modal.open();
+            });
+            if (!confirmed) return;
+            let published = 0;
+            for (const item of drafts) {
+                try {
+                    await this.app.fileManager.processFrontMatter(item.file, (fm) => {
+                        fm.draft = false;
+                        fm.status = "published";
+                        if (!fm.date) { fm.date = new Date().toISOString().split('T')[0]; }
+                    });
+                    published++;
+                } catch (e) { console.error(`Failed to publish ${item.path}:`, e); }
+            }
+            new obsidian.Notice(`Published ${published}/${drafts.length} draft(s).`);
+        } catch (e) { new obsidian.Notice(`Bulk pre-flight failed: ${e.message}`); }
     }
 };

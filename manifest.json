@@ -1,7 +1,7 @@
 {
   "id": "astro-cms-obsidian-plugin",
   "name": "isHistory CMS",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "minAppVersion": "1.0.0",
   "description": "Custom CMS for isHistory — manages archive & vault collections with schema validation, track-based organization, and publish workflows.",
   "author": "Ishhan",
