@@ -1,0 +1,9 @@
+{
+  "id": "astro-cms-obsidian-plugin",
+  "name": "Astro Content Graph CMS",
+  "version": "1.0.0",
+  "minAppVersion": "1.5.0",
+  "description": "Independent validation, graph syncing, and pre-flight publishing for an Astro content folder.",
+  "author": "Ishhan",
+  "isDesktopOnly": false
+}
