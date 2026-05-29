@@ -9,7 +9,6 @@
 import { ItemView, type WorkspaceLeaf, Notice, Modal, TFile } from "obsidian";
 import {
   type ContentItem,
-  type IsHistorySettings,
   type TrackCode,
   TRACKS,
   DEFAULT_SETTINGS,
@@ -34,6 +33,10 @@ export class IsHistoryDashboardView extends ItemView {
   private _updateTimer: ReturnType<typeof setTimeout> | null = null;
   // Track previous item states for differential comparison
   private _itemSnapshots: Map<string, string> = new Map();
+  // Guard against re-entrant rendering
+  private _rendering = false;
+  // Debounced render request
+  private _renderTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: IsHistoryPlugin) {
     super(leaf);
@@ -93,7 +96,7 @@ export class IsHistoryDashboardView extends ItemView {
     if (this.app.workspace.layoutReady) {
       this._doInitialScan();
     } else {
-      const ref = this.app.workspace.on("layout-ready" as any, () => {
+      const ref = this.app.workspace.on("layout-ready" as never, () => {
         this.app.workspace.offref(ref);
         this._doInitialScan();
       });
@@ -104,7 +107,7 @@ export class IsHistoryDashboardView extends ItemView {
 
   private _showLoading(): void {
     try {
-      const c = this._getContainer();
+      const c = this.contentEl;
       c.empty();
       c.addClass("ishistory-dashboard");
       const loadingEl = c.createEl("div", { cls: "cms-loading-state" });
@@ -152,10 +155,17 @@ export class IsHistoryDashboardView extends ItemView {
     }
   }
 
-  private _getContainer(): HTMLElement {
-    // Obsidian's ItemView.contentEl is the official .view-content container.
-    // It is created in the constructor, so it's always available in onOpen().
-    return this.contentEl;
+  /**
+   * Request a debounced full render. Use this instead of calling renderDashboard()
+   * directly from external code (e.g. rescanCache) to avoid stacking renders.
+   */
+  requestRender(): void {
+    if (this._destroyed) return;
+    if (this._renderTimer) clearTimeout(this._renderTimer);
+    this._renderTimer = setTimeout(() => {
+      this._renderTimer = null;
+      this.renderDashboard();
+    }, 100);
   }
 
   // ─── Snapshot-based differential comparison ───
@@ -175,13 +185,17 @@ export class IsHistoryDashboardView extends ItemView {
   // ─── Full Dashboard Render (initial load) ───
 
   renderDashboard(): void {
-    const container = this._getContainer();
-    container.empty();
-    container.addClass("ishistory-dashboard");
-    this._cardElements.clear();
-    this._itemSnapshots.clear();
+    // Guard against re-entrant rendering
+    if (this._rendering || this._destroyed) return;
+    this._rendering = true;
 
     try {
+      const container = this.contentEl;
+      container.empty();
+      container.addClass("ishistory-dashboard");
+      this._cardElements.clear();
+      this._itemSnapshots.clear();
+
       const cache = this.plugin.cache;
 
       // Header
@@ -226,7 +240,6 @@ export class IsHistoryDashboardView extends ItemView {
         });
         btn.addEventListener("click", () => {
           if (f.key === "all") {
-            // "All" clears all other filters
             this.activeFilters.clear();
             this.activeFilters.add("all");
           } else {
@@ -236,15 +249,12 @@ export class IsHistoryDashboardView extends ItemView {
             } else {
               this.activeFilters.add(f.key);
             }
-            // If no filters remain, default back to "all"
             if (this.activeFilters.size === 0) {
               this.activeFilters.add("all");
             }
           }
-          // Update button styles
           filterGroup.querySelectorAll(".cms-filter-btn").forEach((b) => {
-            const btnEl = b as HTMLElement;
-            btnEl.removeClass("cms-filter-btn-active");
+            (b as HTMLElement).removeClass("cms-filter-btn-active");
           });
           for (const key of this.activeFilters) {
             const idx = filters.findIndex((fi) => fi.key === key);
@@ -259,7 +269,7 @@ export class IsHistoryDashboardView extends ItemView {
       const actionsGroup = toolbar.createEl("div", { cls: "cms-actions-group" });
       actionsGroup
         .createEl("button", { text: "+ New Post", cls: "cms-btn cms-btn-primary" })
-        .addEventListener("click", () => this._newPost());
+        .addEventListener("click", () => { void this._newPost(); });
       actionsGroup
         .createEl("button", { text: "Refresh", cls: "cms-btn cms-btn-secondary" })
         .addEventListener("click", () => {
@@ -297,11 +307,14 @@ export class IsHistoryDashboardView extends ItemView {
     } catch (e) {
       console.error("isHistory Dashboard render error:", e);
       try {
+        const container = this.contentEl;
         container.empty();
         const err = container.createEl("div", { cls: "cms-error-display" });
         err.createEl("h3", { text: "Error" });
         err.createEl("p", { text: (e as Error).message });
-      } catch {}
+      } catch { /* last resort */ }
+    } finally {
+      this._rendering = false;
     }
   }
 
@@ -340,7 +353,6 @@ export class IsHistoryDashboardView extends ItemView {
         const parent = existingCard.parentElement;
         const nextSibling = existingCard.nextSibling;
         existingCard.remove();
-        // Build card off-DOM then insert
         const newCard = this._buildCardDOM(item);
         if (parent) {
           parent.insertBefore(newCard, nextSibling);
@@ -387,21 +399,17 @@ export class IsHistoryDashboardView extends ItemView {
   // ─── Card DOM Building ───
 
   private _buildCardDOM(item: ContentItem): HTMLElement {
-    // Build card off-DOM to avoid flicker.
-    // Must use HTMLElement (not DocumentFragment) because Obsidian's createEl
-    // is patched onto HTMLElement.prototype — DocumentFragment doesn't have it.
-    const tempEl = document.createElement("div");
-    const card = tempEl.createEl("div", {
-      cls: `cms-card cms-card-${item.validation.status} cms-card-${item.collection}${item.track ? " cms-card-track-" + item.track : ""}`,
-      attr: {
-        "data-path": item.path,
-        "data-collection": item.collection,
-        "data-track": item.track || "",
-        "data-validation": item.validation.status,
-        "data-draft": String(item.draft),
-        "data-status": item.status,
-      },
-    });
+    // Build card directly on a detached element that uses Obsidian's
+    // patched createEl. We create the card div itself as the root,
+    // then append children to it.
+    const card = document.createElement("div");
+    card.className = `cms-card cms-card-${item.validation.status} cms-card-${item.collection}${item.track ? " cms-card-track-" + item.track : ""}`;
+    card.setAttribute("data-path", item.path);
+    card.setAttribute("data-collection", item.collection);
+    card.setAttribute("data-track", item.track || "");
+    card.setAttribute("data-validation", item.validation.status);
+    card.setAttribute("data-draft", String(item.draft));
+    card.setAttribute("data-status", item.status);
 
     // Header
     const cardHeader = card.createEl("div", { cls: "cms-card-header" });
@@ -416,9 +424,9 @@ export class IsHistoryDashboardView extends ItemView {
 
     // Badges
     const badgeArea = cardHeader.createEl("div", { cls: "cms-card-badges" });
-    if (item.track && TRACKS[item.track]) {
+    if (item.track && TRACKS[item.track as TrackCode]) {
       badgeArea.createEl("span", {
-        text: `${TRACKS[item.track].emoji} ${TRACKS[item.track].name}`,
+        text: `${TRACKS[item.track as TrackCode].emoji} ${TRACKS[item.track as TrackCode].name}`,
         cls: "cms-badge cms-badge-track",
       });
     } else if (item.track) {
@@ -480,7 +488,9 @@ export class IsHistoryDashboardView extends ItemView {
     cardActions
       .createEl("button", { text: "Open", cls: "cms-btn cms-btn-sm" })
       .addEventListener("click", () => {
-        if (item.file) this.app.workspace.getLeaf(false).openFile(item.file);
+        if (item.file) {
+          void this.app.workspace.getLeaf(false).openFile(item.file);
+        }
       });
     cardActions
       .createEl("button", { text: "Validate", cls: "cms-btn cms-btn-sm cms-btn-secondary" })
@@ -497,10 +507,9 @@ export class IsHistoryDashboardView extends ItemView {
     if (item.draft) {
       cardActions
         .createEl("button", { text: "Pre-flight", cls: "cms-btn cms-btn-sm cms-btn-primary" })
-        .addEventListener("click", () => this.plugin.preflightFile(item.file));
+        .addEventListener("click", () => { void this.plugin.preflightFile(item.file); });
     }
 
-    // Extract the built card element
     return card;
   }
 
@@ -508,7 +517,6 @@ export class IsHistoryDashboardView extends ItemView {
     if (!this._gridEl) return null;
     try {
       const card = this._buildCardDOM(item);
-      // Append the built card to the actual grid
       this._gridEl.appendChild(card);
       this._cardElements.set(item.path, card);
       return card;
@@ -620,6 +628,7 @@ export class IsHistoryDashboardView extends ItemView {
     this._destroyed = true;
     this._ready = false;
     if (this._updateTimer) clearTimeout(this._updateTimer);
+    if (this._renderTimer) clearTimeout(this._renderTimer);
     this._cardElements.clear();
     this._pendingPaths.clear();
     this._itemSnapshots.clear();

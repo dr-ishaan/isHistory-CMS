@@ -1,14 +1,16 @@
 {
   "root": true,
+  "parser": "@typescript-eslint/parser",
   "parserOptions": {
     "ecmaVersion": "latest",
-    "sourceType": "module"
+    "sourceType": "module",
+    "project": "./tsconfig.json"
   },
   "env": {
     "browser": true,
     "node": true
   },
-  "plugins": ["obsidian"],
+  "plugins": ["obsidian", "@typescript-eslint"],
   "rules": {
     "obsidian/unresolved-provider-dependencies": "error",
     "obsidian/no-circular-dependencies": "error",
@@ -26,6 +28,21 @@
     "no-unused-expressions": "warn",
     "prefer-const": "warn",
     "no-var": "error",
-    "eqeqeq": ["error", "always"]
-  }
+    "eqeqeq": ["error", "always"],
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-non-null-assertion": "warn",
+    "@typescript-eslint/no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "@typescript-eslint/explicit-function-return-type": "off",
+    "@typescript-eslint/no-floating-promises": "error"
+  },
+  "overrides": [
+    {
+      "files": ["*.test.ts"],
+      "rules": {
+        "@typescript-eslint/no-explicit-any": "off",
+        "@typescript-eslint/no-floating-promises": "off",
+        "no-console": "off"
+      }
+    }
+  ]
 }

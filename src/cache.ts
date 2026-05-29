@@ -14,6 +14,8 @@ import {
   type IsHistorySettings,
   type TrackCode,
   type ValidationResult,
+  type ArchiveFrontmatter,
+  type VaultFrontmatter,
   normalizePathSetting,
 } from "./types";
 import { validateArchive, validateVault, getStatus } from "./validator";
@@ -46,9 +48,9 @@ export class ContentCache {
       // Validate using the correct schema
       let validation: ValidationResult;
       if (collection === "archive") {
-        validation = getStatus(validateArchive(fm as any));
+        validation = getStatus(validateArchive(fm as ArchiveFrontmatter | null));
       } else {
-        validation = getStatus(validateVault(fm as any));
+        validation = getStatus(validateVault(fm as VaultFrontmatter | null));
       }
 
       // Derive track from seriesOrder if track field missing
@@ -60,11 +62,11 @@ export class ContentCache {
 
       // Normalize tags: YAML shorthand (bare string) → single-element array
       const tags = Array.isArray(fm.tags)
-        ? fm.tags
+        ? fm.tags as string[]
         : typeof fm.tags === "string"
           ? [fm.tags]
           : [];
-      const aliases = Array.isArray(fm.aliases) ? fm.aliases : [];
+      const aliases = Array.isArray(fm.aliases) ? fm.aliases as string[] : [];
 
       return {
         file,
@@ -86,8 +88,8 @@ export class ContentCache {
         image: fm.image || "",
         tags,
         aliases,
-        publish: fm.publish,
-        order: fm.order,
+        publish: fm.publish as boolean | undefined,
+        order: fm.order as number | undefined,
         validation,
       };
     } catch {
@@ -180,7 +182,7 @@ export class ContentCache {
   // ─── Statistics ───
 
   getStats(): CacheStats {
-    if (!this._statsDirty && this._stats) return this._stats!;
+    if (!this._statsDirty && this._stats) return this._stats;
 
     try {
       const items = [...this.items.values()];
@@ -194,7 +196,7 @@ export class ContentCache {
         none: archive.filter((i) => !i.track),
       };
 
-      this._stats = {
+      const stats: CacheStats = {
         total: items.length,
         archiveTotal: archive.length,
         vaultTotal: vault.length,
@@ -209,13 +211,14 @@ export class ContentCache {
         trackP: byTrack.P.length,
         trackE: byTrack.E.length,
         trackNone: byTrack.none.length,
-        uniqueTags: [...new Set(items.flatMap((i: ContentItem) => i.tags as string[]))],
-        allEras: [...new Set(archive.map((i) => i.era).filter((e) => e))],
-        allSeries: [...new Set(archive.map((i) => i.series).filter((s) => s))],
+        uniqueTags: [...new Set(items.flatMap((i) => i.tags))],
+        allEras: [...new Set(archive.map((i) => i.era).filter((e): e is string => !!e))],
+        allSeries: [...new Set(archive.map((i) => i.series).filter((s): s is string => !!s))],
       };
 
+      this._stats = stats;
       this._statsDirty = false;
-      return this._stats!;
+      return stats;
     } catch (e) {
       console.error("isHistory CMS: getStats failed", e);
       return {

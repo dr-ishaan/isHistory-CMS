@@ -43,7 +43,7 @@ export default class IsHistoryPlugin extends Plugin {
       // Ribbon icon
       if (this.settings.showRibbonIcon) {
         this._ribbonIcon = this.addRibbonIcon("book-open", "isHistory CMS", () =>
-          this.activateDashboard()
+          void this.activateDashboard()
         );
       }
 
@@ -51,12 +51,12 @@ export default class IsHistoryPlugin extends Plugin {
       this.addCommand({
         id: "open-dashboard",
         name: "Open isHistory dashboard",
-        callback: () => this.activateDashboard(),
+        callback: () => { void this.activateDashboard(); },
       });
       this.addCommand({
         id: "open-sidebar",
         name: "Open quick validate",
-        callback: () => this.activateSidebar(),
+        callback: () => { void this.activateSidebar(); },
       });
       this.addCommand({
         id: "validate-current",
@@ -66,22 +66,22 @@ export default class IsHistoryPlugin extends Plugin {
       this.addCommand({
         id: "publish-current",
         name: "Pre-flight current draft",
-        callback: () => this.publishCurrent(),
+        callback: () => { void this.publishCurrent(); },
       });
       this.addCommand({
         id: "new-article",
         name: "New article (A-track)",
-        callback: () => this.newPost("A"),
+        callback: () => { void this.newPost("A"); },
       });
       this.addCommand({
         id: "new-profile",
         name: "New profile (P-track)",
-        callback: () => this.newPost("P"),
+        callback: () => { void this.newPost("P"); },
       });
       this.addCommand({
         id: "new-event",
         name: "New event (E-track)",
-        callback: () => this.newPost("E"),
+        callback: () => { void this.newPost("E"); },
       });
       this.addCommand({
         id: "bulk-validate",
@@ -91,7 +91,7 @@ export default class IsHistoryPlugin extends Plugin {
       this.addCommand({
         id: "bulk-preflight",
         name: "Bulk pre-flight all drafts",
-        callback: () => this.bulkPreFlight(),
+        callback: () => { void this.bulkPreFlight(); },
       });
 
       // Settings tab
@@ -122,7 +122,10 @@ export default class IsHistoryPlugin extends Plugin {
       // Normalize paths on load
       this.settings.archivePath = normalizePathSetting(this.settings.archivePath);
       this.settings.vaultPath = normalizePathSetting(this.settings.vaultPath);
-      await this.saveData(this.settings);
+      // Only save if migration changed something
+      if (loaded && (loaded._version || 0) < DEFAULT_SETTINGS._version) {
+        await this.saveData(this.settings);
+      }
     } catch (e) {
       console.error("isHistory CMS: loadSettings failed", e);
       this.settings = Object.assign({}, DEFAULT_SETTINGS) as IsHistorySettings;
@@ -145,7 +148,7 @@ export default class IsHistoryPlugin extends Plugin {
       const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_DASHBOARD);
       for (const leaf of leaves) {
         if (leaf.view instanceof IsHistoryDashboardView) {
-          leaf.view.renderDashboard();
+          leaf.view.requestRender();
         }
       }
     } catch (e) {
@@ -163,7 +166,7 @@ export default class IsHistoryPlugin extends Plugin {
       }
       if (this.settings.showRibbonIcon) {
         this._ribbonIcon = this.addRibbonIcon("book-open", "isHistory CMS", () =>
-          this.activateDashboard()
+          void this.activateDashboard()
         );
       }
     } catch (e) {
@@ -181,7 +184,7 @@ export default class IsHistoryPlugin extends Plugin {
         leaf = workspace.getLeaf(false);
         await leaf.setViewState({ type: VIEW_TYPE_DASHBOARD, active: true });
       }
-      workspace.revealLeaf(leaf);
+      await workspace.revealLeaf(leaf);
     } catch (e) { console.error(e); }
   }
 
@@ -198,7 +201,7 @@ export default class IsHistoryPlugin extends Plugin {
         leaf = rightLeaf;
         await leaf.setViewState({ type: VIEW_TYPE_SIDEBAR, active: true });
       }
-      workspace.revealLeaf(leaf);
+      await workspace.revealLeaf(leaf);
     } catch (e) { console.error(e); }
   }
 
@@ -332,7 +335,8 @@ Start writing here...
 `;
 
       const createdFile = await this.app.vault.create(path, content);
-      this.app.workspace.getLeaf(false).openFile(createdFile);
+      const leaf = this.app.workspace.getLeaf(false);
+      await leaf.openFile(createdFile);
       new Notice(`Created ${seriesOrder} — fill in the frontmatter!`);
     } catch (e) {
       new Notice(`Failed to create: ${(e as Error).message}`);

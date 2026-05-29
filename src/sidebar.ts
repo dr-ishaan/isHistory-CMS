@@ -5,8 +5,8 @@
  * Subscribes to file changes, deletions, and renames.
  */
 
-import { ItemView, type WorkspaceLeaf, Notice, type TFile } from "obsidian";
-import { type IsHistorySettings, TRACKS, normalizePathSetting } from "./types";
+import { ItemView, type WorkspaceLeaf, Notice } from "obsidian";
+import { normalizePathSetting } from "./types";
 import IsHistoryPlugin from "./main";
 
 export const VIEW_TYPE_SIDEBAR = "ishistory-sidebar";
@@ -28,8 +28,9 @@ export class IsHistorySidebarView extends ItemView {
   async onOpen() {
     this._destroyed = false;
 
+    // Use "file-open" instead of the non-existent "active-file-change"
     this.registerEvent(
-      this.app.workspace.on("active-file-change" as any, () => {
+      this.app.workspace.on("file-open" as never, () => {
         if (!this.app.workspace.layoutReady || this._destroyed) return;
         this._debounceUpdate();
       })
@@ -64,7 +65,7 @@ export class IsHistorySidebarView extends ItemView {
     if (this.app.workspace.layoutReady) {
       this._debounceUpdate();
     } else {
-      const ref = this.app.workspace.on("layout-ready" as any, () => {
+      const ref = this.app.workspace.on("layout-ready" as never, () => {
         this.app.workspace.offref(ref);
         this._debounceUpdate();
       });
@@ -81,7 +82,6 @@ export class IsHistorySidebarView extends ItemView {
   updateUI(): void {
     if (this._destroyed) return;
     try {
-      // Use Obsidian's built-in contentEl (the .view-content container)
       const container = this.contentEl;
       container.empty();
       container.addClass("ishistory-sidebar");
@@ -159,7 +159,7 @@ export class IsHistorySidebarView extends ItemView {
       }
       actions
         .createEl("button", { text: "Open Dashboard", cls: "cms-btn cms-btn-secondary cms-btn-full" })
-        .addEventListener("click", () => this.plugin.activateDashboard());
+        .addEventListener("click", () => { void this.plugin.activateDashboard(); });
     } catch (e) { console.error(e); }
   }
 

@@ -6,15 +6,24 @@
  */
 
 import { PluginSettingTab, type App, Setting } from "obsidian";
-import { type IsHistorySettings, SETTINGS_VERSION, DEFAULT_SETTINGS, normalizePathSetting } from "./types";
+import { SETTINGS_VERSION, DEFAULT_SETTINGS, normalizePathSetting } from "./types";
 import IsHistoryPlugin from "./main";
 
 export class IsHistorySettingTab extends PluginSettingTab {
   plugin: IsHistoryPlugin;
+  private _rescanTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(app: App, plugin: IsHistoryPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  /** Debounce cache rescan to avoid freezing on rapid input */
+  private _debouncedRescan(delay = 600): void {
+    if (this._rescanTimer) clearTimeout(this._rescanTimer);
+    this._rescanTimer = setTimeout(() => {
+      this.plugin.rescanCache();
+    }, delay);
   }
 
   display(): void {
@@ -32,10 +41,12 @@ export class IsHistorySettingTab extends PluginSettingTab {
           .setButtonText("Open Obsidian Git")
           .setClass("mod-cta")
           .onClick(() => {
-            const gitPlugin = (this.app as any).plugins?.plugins?.["obsidian-git"];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const appAny = this.app as any;
+            const gitPlugin = appAny.plugins?.plugins?.["obsidian-git"];
             if (gitPlugin) {
-              (this.app as any).setting?.open();
-              (this.app as any).setting?.openTabById("obsidian-git");
+              appAny.setting?.open();
+              appAny.setting?.openTabById("obsidian-git");
             } else {
               window.open("https://github.com/Vinzent03/obsidian-git", "_blank");
             }
@@ -53,7 +64,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             this.plugin.settings.archivePath = normalizePathSetting(v);
             await this.plugin.saveSettings();
-            this.plugin.rescanCache();
+            this._debouncedRescan();
           })
       );
     new Setting(containerEl)
@@ -66,7 +77,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
           .onChange(async (v) => {
             this.plugin.settings.vaultPath = normalizePathSetting(v);
             await this.plugin.saveSettings();
-            this.plugin.rescanCache();
+            this._debouncedRescan();
           })
       );
 
@@ -119,8 +130,8 @@ export class IsHistorySettingTab extends PluginSettingTab {
 
 // ─── Settings Migration ───
 
-export function migrateSettings(loaded: Record<string, any>): Record<string, any> {
-  const version = loaded._version || 0;
+export function migrateSettings(loaded: Record<string, unknown>): Record<string, unknown> {
+  const version = (loaded._version as number) || 0;
 
   if (version < 5) {
     loaded.archivePath = loaded.archivePath || DEFAULT_SETTINGS.archivePath;
