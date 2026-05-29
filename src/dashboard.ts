@@ -105,7 +105,6 @@ export class IsHistoryDashboardView extends ItemView {
   private _showLoading(): void {
     try {
       const c = this._getContainer();
-      if (!c) return;
       c.empty();
       c.addClass("ishistory-dashboard");
       const loadingEl = c.createEl("div", { cls: "cms-loading-state" });
@@ -153,11 +152,10 @@ export class IsHistoryDashboardView extends ItemView {
     }
   }
 
-  private _getContainer(): HTMLElement | null {
-    try {
-      // Use querySelector for more semantic, resilient container lookup
-      return this.containerEl.querySelector(".view-content") as HTMLElement || this.containerEl.createDiv();
-    } catch { return null; }
+  private _getContainer(): HTMLElement {
+    // Obsidian's ItemView.contentEl is the official .view-content container.
+    // It is created in the constructor, so it's always available in onOpen().
+    return this.contentEl;
   }
 
   // ─── Snapshot-based differential comparison ───
@@ -178,7 +176,6 @@ export class IsHistoryDashboardView extends ItemView {
 
   renderDashboard(): void {
     const container = this._getContainer();
-    if (!container) return;
     container.empty();
     container.addClass("ishistory-dashboard");
     this._cardElements.clear();
@@ -391,8 +388,8 @@ export class IsHistoryDashboardView extends ItemView {
 
   private _buildCardDOM(item: ContentItem): HTMLElement {
     // Build card off-DOM using a document fragment to avoid flicker
-    const tempDiv = document.createElement("div");
-    const card = tempDiv.createEl("div", {
+    const frag = document.createDocumentFragment();
+    const card = frag.createEl("div", {
       cls: `cms-card cms-card-${item.validation.status} cms-card-${item.collection}${item.track ? " cms-card-track-" + item.track : ""}`,
       attr: {
         "data-path": item.path,

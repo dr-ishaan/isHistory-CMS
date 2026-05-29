@@ -81,8 +81,8 @@ export class IsHistorySidebarView extends ItemView {
   updateUI(): void {
     if (this._destroyed) return;
     try {
-      const container = this.containerEl.querySelector(".view-content") as HTMLElement;
-      if (!container) return;
+      // Use Obsidian's built-in contentEl (the .view-content container)
+      const container = this.contentEl;
       container.empty();
       container.addClass("ishistory-sidebar");
 
