@@ -2,11 +2,11 @@
  * isHistory CMS Plugin — Settings Tab
  *
  * Configuration UI for content paths, pagination, appearance,
- * and Git integration.
+ * series defaults, and Git integration.
  */
 
 import { PluginSettingTab, type App, Setting } from "obsidian";
-import { type IsHistorySettings, SETTINGS_VERSION, DEFAULT_SETTINGS } from "./types";
+import { type IsHistorySettings, SETTINGS_VERSION, DEFAULT_SETTINGS, normalizePathSetting } from "./types";
 import { IsHistoryPlugin } from "./main";
 
 export class IsHistorySettingTab extends PluginSettingTab {
@@ -51,7 +51,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
           .setPlaceholder("src/content/blog")
           .setValue(this.plugin.settings.archivePath)
           .onChange(async (v) => {
-            this.plugin.settings.archivePath = v;
+            this.plugin.settings.archivePath = normalizePathSetting(v);
             await this.plugin.saveSettings();
             this.plugin.rescanCache();
           })
@@ -64,9 +64,23 @@ export class IsHistorySettingTab extends PluginSettingTab {
           .setPlaceholder("src/content/vault")
           .setValue(this.plugin.settings.vaultPath)
           .onChange(async (v) => {
-            this.plugin.settings.vaultPath = v;
+            this.plugin.settings.vaultPath = normalizePathSetting(v);
             await this.plugin.saveSettings();
             this.plugin.rescanCache();
+          })
+      );
+
+    containerEl.createEl("h3", { text: "Defaults" });
+    new Setting(containerEl)
+      .setName("Default series")
+      .setDesc("Series name applied to new posts (default: minds-and-machines)")
+      .addText((text) =>
+        text
+          .setPlaceholder("minds-and-machines")
+          .setValue(this.plugin.settings.defaultSeries || "")
+          .onChange(async (v) => {
+            this.plugin.settings.defaultSeries = v.trim();
+            await this.plugin.saveSettings();
           })
       );
 
@@ -128,6 +142,10 @@ export function migrateSettings(loaded: Record<string, any>): Record<string, any
     if (!loaded.cardsPerPage || typeof loaded.cardsPerPage !== "number") {
       loaded.cardsPerPage = DEFAULT_SETTINGS.cardsPerPage;
     }
+  }
+
+  if (version < 7) {
+    loaded.defaultSeries = loaded.defaultSeries || DEFAULT_SETTINGS.defaultSeries;
   }
 
   loaded._version = SETTINGS_VERSION;

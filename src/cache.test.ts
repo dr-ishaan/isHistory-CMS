@@ -4,9 +4,9 @@
  * Tests for sorting, filtering, and collection detection logic.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { ContentCache } from "./cache";
-import type { IsHistorySettings, ContentItem, ValidationResult, CacheStats } from "./types";
+import type { IsHistorySettings, ContentItem, ValidationResult } from "./types";
 
 // ─── Mock helpers ───
 
@@ -16,6 +16,7 @@ const defaultSettings: IsHistorySettings = {
   vaultPath: "src/content/vault",
   cardsPerPage: 40,
   showRibbonIcon: true,
+  defaultSeries: "minds-and-machines",
 };
 
 function makeItem(overrides: Partial<ContentItem> & { path: string }): ContentItem {
@@ -72,6 +73,16 @@ describe("ContentCache._getCollection", () => {
     expect(cache._getCollection("posts/my-post.md", customSettings)).toBe("archive");
     expect(cache._getCollection("notes/my-note.md", customSettings)).toBe("vault");
   });
+
+  it("should handle trailing slashes in paths", () => {
+    const slashSettings: IsHistorySettings = {
+      ...defaultSettings,
+      archivePath: "src/content/blog/",
+      vaultPath: "src/content/vault/",
+    };
+    expect(cache._getCollection("src/content/blog/post.md", slashSettings)).toBe("archive");
+    expect(cache._getCollection("src/content/vault/notes.md", slashSettings)).toBe("vault");
+  });
 });
 
 // ─── isInCollection ───
@@ -99,8 +110,7 @@ describe("ContentCache.getSortedItems", () => {
 
   beforeEach(() => {
     cache.items.clear();
-    // @ts-ignore - reset private field
-    cache._statsDirty = true;
+    cache.resetStatsDirty();
   });
 
   it("should sort by seriesOrder track then number", () => {
@@ -111,7 +121,6 @@ describe("ContentCache.getSortedItems", () => {
 
     const sorted = cache.getSortedItems();
     const orders = sorted.map((i) => i.seriesOrder);
-    // Alphabetical by track letter: A < E < P
     expect(orders).toEqual(["A1", "A5", "E2", "P3"]);
   });
 
@@ -153,7 +162,7 @@ describe("ContentCache.getSortedItems", () => {
   });
 });
 
-// ─── Filtering ───
+// ─── Filtering (multi-criterion AND) ───
 
 describe("ContentCache.matchesFilter", () => {
   const cache = new ContentCache();
@@ -163,78 +172,97 @@ describe("ContentCache.matchesFilter", () => {
 
   it("should match 'all' filter for any item", () => {
     const item = makeFilterItem({});
-    expect(cache.matchesFilter(item, "all", "")).toBe(true);
+    expect(cache.matchesFilter(item, new Set(["all"]), "")).toBe(true);
   });
 
   it("should match 'archive' filter only for archive items", () => {
-    expect(cache.matchesFilter(makeFilterItem({ collection: "archive" }), "archive", "")).toBe(true);
-    expect(cache.matchesFilter(makeFilterItem({ collection: "vault" }), "archive", "")).toBe(false);
+    expect(cache.matchesFilter(makeFilterItem({ collection: "archive" }), new Set(["archive"]), "")).toBe(true);
+    expect(cache.matchesFilter(makeFilterItem({ collection: "vault" }), new Set(["archive"]), "")).toBe(false);
   });
 
   it("should match 'vault' filter only for vault items", () => {
-    expect(cache.matchesFilter(makeFilterItem({ collection: "vault" }), "vault", "")).toBe(true);
-    expect(cache.matchesFilter(makeFilterItem({ collection: "archive" }), "vault", "")).toBe(false);
+    expect(cache.matchesFilter(makeFilterItem({ collection: "vault" }), new Set(["vault"]), "")).toBe(true);
+    expect(cache.matchesFilter(makeFilterItem({ collection: "archive" }), new Set(["vault"]), "")).toBe(false);
   });
 
   it("should match track filters", () => {
-    expect(cache.matchesFilter(makeFilterItem({ track: "A" }), "track-A", "")).toBe(true);
-    expect(cache.matchesFilter(makeFilterItem({ track: "P" }), "track-A", "")).toBe(false);
-    expect(cache.matchesFilter(makeFilterItem({ track: "E" }), "track-E", "")).toBe(true);
+    expect(cache.matchesFilter(makeFilterItem({ track: "A" }), new Set(["track-A"]), "")).toBe(true);
+    expect(cache.matchesFilter(makeFilterItem({ track: "P" }), new Set(["track-A"]), "")).toBe(false);
+    expect(cache.matchesFilter(makeFilterItem({ track: "E" }), new Set(["track-E"]), "")).toBe(true);
   });
 
   it("should match 'drafts' filter only for draft items", () => {
-    expect(cache.matchesFilter(makeFilterItem({ draft: true }), "drafts", "")).toBe(true);
-    expect(cache.matchesFilter(makeFilterItem({ draft: false }), "drafts", "")).toBe(false);
+    expect(cache.matchesFilter(makeFilterItem({ draft: true }), new Set(["drafts"]), "")).toBe(true);
+    expect(cache.matchesFilter(makeFilterItem({ draft: false }), new Set(["drafts"]), "")).toBe(false);
   });
 
   it("should match validation status filters", () => {
     const readyItem = makeFilterItem({ validation: { status: "ready", label: "Ready", errors: [] } });
     const errorItem = makeFilterItem({ validation: { status: "error", label: "Errors", errors: [{ field: "title", message: "Missing", severity: "error" }] } });
 
-    expect(cache.matchesFilter(readyItem, "ready", "")).toBe(true);
-    expect(cache.matchesFilter(errorItem, "ready", "")).toBe(false);
-    expect(cache.matchesFilter(errorItem, "errors", "")).toBe(true);
-    expect(cache.matchesFilter(readyItem, "errors", "")).toBe(false);
+    expect(cache.matchesFilter(readyItem, new Set(["ready"]), "")).toBe(true);
+    expect(cache.matchesFilter(errorItem, new Set(["ready"]), "")).toBe(false);
+    expect(cache.matchesFilter(errorItem, new Set(["errors"]), "")).toBe(true);
+    expect(cache.matchesFilter(readyItem, new Set(["errors"]), "")).toBe(false);
+  });
+
+  // ─── AND Logic ───
+
+  it("should apply AND logic for multiple filters", () => {
+    const item = makeFilterItem({ collection: "archive", track: "A", draft: true });
+    // archive + track-A = match
+    expect(cache.matchesFilter(item, new Set(["archive", "track-A"]), "")).toBe(true);
+    // archive + vault = no match (mutually exclusive)
+    expect(cache.matchesFilter(item, new Set(["archive", "vault"]), "")).toBe(false);
+    // track-A + drafts = match
+    expect(cache.matchesFilter(item, new Set(["track-A", "drafts"]), "")).toBe(true);
+    // track-A + errors = no match
+    expect(cache.matchesFilter(item, new Set(["track-A", "errors"]), "")).toBe(false);
+  });
+
+  it("should return false when no filter matches in AND set", () => {
+    const item = makeFilterItem({ track: "A" });
+    expect(cache.matchesFilter(item, new Set(["track-P", "drafts"]), "")).toBe(false);
   });
 
   // ─── Search ───
 
   it("should match search query in title", () => {
     const item = makeFilterItem({ title: "The Ancient Dream of AI" });
-    expect(cache.matchesFilter(item, "all", "ancient")).toBe(true);
-    expect(cache.matchesFilter(item, "all", "robotics")).toBe(false);
+    expect(cache.matchesFilter(item, new Set(["all"]), "ancient")).toBe(true);
+    expect(cache.matchesFilter(item, new Set(["all"]), "robotics")).toBe(false);
   });
 
   it("should match search query in path", () => {
     const item = makeFilterItem({ path: "src/content/blog/a1-ancient-dream.md" });
-    expect(cache.matchesFilter(item, "all", "a1-ancient")).toBe(true);
+    expect(cache.matchesFilter(item, new Set(["all"]), "a1-ancient")).toBe(true);
   });
 
   it("should match search query in tags", () => {
     const item = makeFilterItem({ tags: ["ai-history", "philosophy"] });
-    expect(cache.matchesFilter(item, "all", "philosophy")).toBe(true);
-    expect(cache.matchesFilter(item, "all", "mathematics")).toBe(false);
+    expect(cache.matchesFilter(item, new Set(["all"]), "philosophy")).toBe(true);
+    expect(cache.matchesFilter(item, new Set(["all"]), "mathematics")).toBe(false);
   });
 
   it("should match search query in era", () => {
     const item = makeFilterItem({ era: "Ancient - 1850" });
-    expect(cache.matchesFilter(item, "all", "ancient")).toBe(true);
+    expect(cache.matchesFilter(item, new Set(["all"]), "ancient")).toBe(true);
   });
 
   it("should match search query in figures", () => {
     const item = makeFilterItem({ figures: "Ada Lovelace, Alan Turing" });
-    expect(cache.matchesFilter(item, "all", "turing")).toBe(true);
+    expect(cache.matchesFilter(item, new Set(["all"]), "turing")).toBe(true);
   });
 
   it("should match search query in seriesOrder", () => {
     const item = makeFilterItem({ seriesOrder: "A1" });
-    expect(cache.matchesFilter(item, "all", "a1")).toBe(true);
+    expect(cache.matchesFilter(item, new Set(["all"]), "a1")).toBe(true);
   });
 
   it("should be case-insensitive", () => {
     const item = makeFilterItem({ title: "The Ancient Dream" });
-    expect(cache.matchesFilter(item, "all", "ANCIENT")).toBe(true);
-    expect(cache.matchesFilter(item, "all", "the ancient")).toBe(true);
+    expect(cache.matchesFilter(item, new Set(["all"]), "ANCIENT")).toBe(true);
+    expect(cache.matchesFilter(item, new Set(["all"]), "the ancient")).toBe(true);
   });
 });
 

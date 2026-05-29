@@ -3,9 +3,10 @@
  *
  * Dual-collection, incremental content index.
  * Manages in-memory content items with stats caching.
+ * Supports multi-criterion AND filtering.
  */
 
-import { type App, type TFile, type MetadataCache } from "obsidian";
+import { type App, type TFile } from "obsidian";
 import {
   type ContentItem,
   type CollectionType,
@@ -13,6 +14,7 @@ import {
   type IsHistorySettings,
   type TrackCode,
   type ValidationResult,
+  normalizePathSetting,
 } from "./types";
 import { validateArchive, validateVault, getStatus } from "./validator";
 
@@ -24,8 +26,10 @@ export class ContentCache {
   // ─── Collection Detection ───
 
   _getCollection(path: string, settings: IsHistorySettings): CollectionType | null {
-    if (path.startsWith(settings.archivePath)) return "archive";
-    if (path.startsWith(settings.vaultPath)) return "vault";
+    const normalizedArchive = normalizePathSetting(settings.archivePath);
+    const normalizedVault = normalizePathSetting(settings.vaultPath);
+    if (path.startsWith(normalizedArchive)) return "archive";
+    if (path.startsWith(normalizedVault)) return "vault";
     return null;
   }
 
@@ -54,6 +58,14 @@ export class ContentCache {
         if (m) track = m[1] as TrackCode;
       }
 
+      // Normalize tags: YAML shorthand (bare string) → single-element array
+      const tags = Array.isArray(fm.tags)
+        ? fm.tags
+        : typeof fm.tags === "string"
+          ? [fm.tags]
+          : [];
+      const aliases = Array.isArray(fm.aliases) ? fm.aliases : [];
+
       return {
         file,
         path: file.path,
@@ -72,8 +84,8 @@ export class ContentCache {
         figures: fm.figures || "",
         connects: fm.connects || "",
         image: fm.image || "",
-        tags: Array.isArray(fm.tags) ? fm.tags : [],
-        aliases: Array.isArray(fm.aliases) ? fm.aliases : [],
+        tags,
+        aliases,
         publish: fm.publish,
         order: fm.order,
         validation,
@@ -90,8 +102,8 @@ export class ContentCache {
       const files = app.vault.getMarkdownFiles();
       const contentFiles = files.filter(
         (f) =>
-          f.path.startsWith(settings.archivePath) ||
-          f.path.startsWith(settings.vaultPath)
+          f.path.startsWith(normalizePathSetting(settings.archivePath)) ||
+          f.path.startsWith(normalizePathSetting(settings.vaultPath))
       );
       const currentPaths = new Set(contentFiles.map((f) => f.path));
 
@@ -103,12 +115,15 @@ export class ContentCache {
         }
       }
 
-      // Rebuild all items (always rebuild to pick up content changes)
+      // Rebuild items, only mark dirty if content actually changed
       for (const file of contentFiles) {
         const item = this._buildItem(file, app, settings);
         if (item) {
-          this.items.set(file.path, item);
-          this._statsDirty = true;
+          const existing = this.items.get(file.path);
+          if (!existing || this._itemFingerprint(existing) !== this._itemFingerprint(item)) {
+            this.items.set(file.path, item);
+            this._statsDirty = true;
+          }
         }
       }
     } catch (e) {
@@ -139,10 +154,27 @@ export class ContentCache {
   }
 
   isInCollection(path: string, settings: IsHistorySettings): boolean {
+    const normalizedArchive = normalizePathSetting(settings.archivePath);
+    const normalizedVault = normalizePathSetting(settings.vaultPath);
     return (
-      path.startsWith(settings.archivePath) ||
-      path.startsWith(settings.vaultPath)
+      path.startsWith(normalizedArchive) ||
+      path.startsWith(normalizedVault)
     );
+  }
+
+  // ─── Item Fingerprint (for change detection) ───
+
+  private _itemFingerprint(item: ContentItem): string {
+    return JSON.stringify({
+      t: item.title, d: item.draft, s: item.status,
+      v: item.validation.status, tr: item.track,
+      desc: item.description, era: item.era, date: item.date,
+      part: item.part, figures: item.figures, tags: item.tags,
+      so: item.seriesOrder, errs: item.validation.errors.length,
+      connects: item.connects, image: item.image,
+      aliases: item.aliases, series: item.series,
+      publish: item.publish, order: item.order,
+    });
   }
 
   // ─── Statistics ───
@@ -162,21 +194,14 @@ export class ContentCache {
         none: archive.filter((i) => !i.track),
       };
 
-      const byStatus = {
-        published: archive.filter((i) => i.status === "published").length,
-        upcoming: archive.filter((i) => i.status === "upcoming").length,
-        planned: archive.filter((i) => i.status === "planned").length,
-        none: archive.filter((i) => !i.status).length,
-      };
-
       this._stats = {
         total: items.length,
         archiveTotal: archive.length,
         vaultTotal: vault.length,
         drafts: archive.filter((i) => i.draft).length,
-        published: byStatus.published,
-        upcoming: byStatus.upcoming,
-        planned: byStatus.planned,
+        published: archive.filter((i) => i.status === "published").length,
+        upcoming: archive.filter((i) => i.status === "upcoming").length,
+        planned: archive.filter((i) => i.status === "planned").length,
         ready: items.filter((i) => i.validation.status === "ready").length,
         errors: items.filter((i) => i.validation.status === "error").length,
         warnings: items.filter((i) => i.validation.status === "warning").length,
@@ -234,26 +259,22 @@ export class ContentCache {
     });
   }
 
-  // ─── Filtering ───
+  // ─── Filtering (multi-criterion AND logic) ───
 
   matchesFilter(
     item: ContentItem,
-    filter: string,
+    activeFilters: Set<string>,
     searchQuery: string
   ): boolean {
-    if (filter === "archive" && item.collection !== "archive") return false;
-    if (filter === "vault" && item.collection !== "vault") return false;
-    if (filter === "track-A" && item.track !== "A") return false;
-    if (filter === "track-P" && item.track !== "P") return false;
-    if (filter === "track-E" && item.track !== "E") return false;
-    if (filter === "drafts" && item.draft !== true) return false;
-    if (filter === "published" && item.status !== "published") return false;
-    if (filter === "upcoming" && item.status !== "upcoming") return false;
-    if (filter === "planned" && item.status !== "planned") return false;
-    if (filter === "ready" && item.validation.status !== "ready") return false;
-    if (filter === "errors" && item.validation.status !== "error") return false;
-    if (filter === "warnings" && item.validation.status !== "warning")
-      return false;
+    // If "all" is in the active filters, skip filter checks (but still apply search)
+    const hasAll = activeFilters.has("all");
+
+    if (!hasAll) {
+      // All active filters must match (AND logic)
+      for (const filter of activeFilters) {
+        if (!this._matchesSingleFilter(item, filter)) return false;
+      }
+    }
 
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -268,5 +289,27 @@ export class ContentCache {
     }
 
     return true;
+  }
+
+  private _matchesSingleFilter(item: ContentItem, filter: string): boolean {
+    if (filter === "archive" && item.collection !== "archive") return false;
+    if (filter === "vault" && item.collection !== "vault") return false;
+    if (filter === "track-A" && item.track !== "A") return false;
+    if (filter === "track-P" && item.track !== "P") return false;
+    if (filter === "track-E" && item.track !== "E") return false;
+    if (filter === "drafts" && item.draft !== true) return false;
+    if (filter === "published" && item.status !== "published") return false;
+    if (filter === "upcoming" && item.status !== "upcoming") return false;
+    if (filter === "planned" && item.status !== "planned") return false;
+    if (filter === "ready" && item.validation.status !== "ready") return false;
+    if (filter === "errors" && item.validation.status !== "error") return false;
+    if (filter === "warnings" && item.validation.status !== "warning")
+      return false;
+    return true;
+  }
+
+  /** Reset stats dirty flag (for testing). */
+  resetStatsDirty(): void {
+    this._statsDirty = true;
   }
 }

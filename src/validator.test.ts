@@ -208,8 +208,14 @@ describe("validateArchive", () => {
   // ─── Tags ───
 
   describe("tags validation", () => {
-    it("should error when tags is a string instead of array", () => {
-      const errors = validateArchive({ title: "Valid", date: "2026-01-01", description: "Valid desc", tags: "tag1, tag2" } as any);
+    it("should accept bare string tag as YAML shorthand", () => {
+      const errors = validateArchive({ title: "Valid", date: "2026-01-01", description: "Valid desc", tags: "ai-history" } as any);
+      const tagErrors = errors.filter((e) => e.field === "tags");
+      expect(tagErrors).toHaveLength(0);
+    });
+
+    it("should error when tags is a non-string, non-array type", () => {
+      const errors = validateArchive({ title: "Valid", date: "2026-01-01", description: "Valid desc", tags: 42 } as any);
       const tagErrors = errors.filter((e) => e.field === "tags");
       expect(tagErrors).toHaveLength(1);
       expect(tagErrors[0].severity).toBe("error");
@@ -347,8 +353,14 @@ describe("validateVault", () => {
     expect(pubErrors).toHaveLength(0);
   });
 
-  it("should error when tags is not array", () => {
+  it("should accept bare string tag as YAML shorthand (vault)", () => {
     const errors = validateVault({ title: "Notes", tags: "meta" } as any);
+    const tagErrors = errors.filter((e) => e.field === "tags");
+    expect(tagErrors).toHaveLength(0);
+  });
+
+  it("should error when vault tags is a non-string, non-array type", () => {
+    const errors = validateVault({ title: "Notes", tags: 42 } as any);
     const tagErrors = errors.filter((e) => e.field === "tags");
     expect(tagErrors).toHaveLength(1);
   });

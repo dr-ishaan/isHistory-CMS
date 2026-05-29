@@ -9,13 +9,22 @@
 import {
   type ValidationError,
   type ValidationResult,
-  type ValidationStatus,
-  type Severity,
   type ArchiveFrontmatter,
   type VaultFrontmatter,
   TRACKS,
   STATUSES,
 } from "./types";
+
+// ─── Helper: normalize tags (YAML shorthand → array) ───
+
+function normalizeTags(tags: unknown): unknown {
+  // Obsidian/YAML allows `tags: ai` as shorthand for `tags: [ai]`
+  // A bare string should be treated as a single-element array.
+  if (typeof tags === "string") {
+    return [tags];
+  }
+  return tags;
+}
 
 // ─── Archive Validation ───
 
@@ -58,6 +67,12 @@ export function validateArchive(fm: ArchiveFrontmatter | null | undefined): Vali
       field: "date",
       message: "Invalid date. Use YYYY-MM-DD format.",
       severity: "error",
+    });
+  } else if (new Date(String(fm.date)) > new Date()) {
+    errors.push({
+      field: "date",
+      message: "Date is in the future. Articles should have a current or past date.",
+      severity: "warning",
     });
   }
 
@@ -144,8 +159,9 @@ export function validateArchive(fm: ArchiveFrontmatter | null | undefined): Vali
     });
   }
 
-  // tags format
-  if (fm.tags !== undefined && !Array.isArray(fm.tags)) {
+  // tags format (accept YAML shorthand: bare string → single-element array)
+  const normalizedTags = normalizeTags(fm.tags);
+  if (normalizedTags !== undefined && !Array.isArray(normalizedTags)) {
     errors.push({
       field: "tags",
       message: 'Must be a YAML list: [tag1, tag2, tag3]',
@@ -221,6 +237,24 @@ export function validateVault(fm: VaultFrontmatter | null | undefined): Validati
     });
   }
 
+  // created date format
+  if (fm.created && isNaN(Date.parse(String(fm.created)))) {
+    errors.push({
+      field: "created",
+      message: "Invalid date. Use YYYY-MM-DD format.",
+      severity: "warning",
+    });
+  }
+
+  // updated date format
+  if (fm.updated && isNaN(Date.parse(String(fm.updated)))) {
+    errors.push({
+      field: "updated",
+      message: "Invalid date. Use YYYY-MM-DD format.",
+      severity: "warning",
+    });
+  }
+
   if (fm.publish !== undefined && typeof fm.publish !== "boolean") {
     errors.push({
       field: "publish",
@@ -229,7 +263,9 @@ export function validateVault(fm: VaultFrontmatter | null | undefined): Validati
     });
   }
 
-  if (fm.tags !== undefined && !Array.isArray(fm.tags)) {
+  // tags format (accept YAML shorthand)
+  const normalizedTags = normalizeTags(fm.tags);
+  if (normalizedTags !== undefined && !Array.isArray(normalizedTags)) {
     errors.push({
       field: "tags",
       message: 'Must be a YAML list: [tag1, tag2]',

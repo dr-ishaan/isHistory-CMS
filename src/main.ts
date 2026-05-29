@@ -9,9 +9,9 @@ import { Plugin, Notice, Modal, type TFile } from "obsidian";
 import {
   type IsHistorySettings,
   type TrackCode,
-  type ContentItem,
   type ValidationResult,
   DEFAULT_SETTINGS,
+  normalizePathSetting,
 } from "./types";
 import { ContentCache } from "./cache";
 import { validateArchive, validateVault, getStatus } from "./validator";
@@ -106,7 +106,9 @@ export class IsHistoryPlugin extends Plugin {
     try {
       this.app.workspace.detachLeavesOfType(VIEW_TYPE_DASHBOARD);
       this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
-    } catch {}
+    } catch (e) {
+      console.error("isHistory CMS: onunload error", e);
+    }
   }
 
   // ─── Settings ───
@@ -117,8 +119,12 @@ export class IsHistoryPlugin extends Plugin {
       const migrated = migrateSettings(loaded || {});
       this.settings = Object.assign({}, DEFAULT_SETTINGS, migrated) as IsHistorySettings;
       this.settings._version = DEFAULT_SETTINGS._version;
+      // Normalize paths on load
+      this.settings.archivePath = normalizePathSetting(this.settings.archivePath);
+      this.settings.vaultPath = normalizePathSetting(this.settings.vaultPath);
       await this.saveData(this.settings);
-    } catch {
+    } catch (e) {
+      console.error("isHistory CMS: loadSettings failed", e);
       this.settings = Object.assign({}, DEFAULT_SETTINGS) as IsHistorySettings;
     }
   }
@@ -126,7 +132,9 @@ export class IsHistoryPlugin extends Plugin {
   async saveSettings() {
     try {
       await this.saveData(this.settings);
-    } catch {}
+    } catch (e) {
+      console.error("isHistory CMS: saveSettings failed", e);
+    }
   }
 
   // ─── Cache Refresh ───
@@ -182,7 +190,12 @@ export class IsHistoryPlugin extends Plugin {
       const { workspace } = this.app;
       let leaf = workspace.getLeavesOfType(VIEW_TYPE_SIDEBAR)[0];
       if (!leaf) {
-        leaf = workspace.getRightLeaf(false)!;
+        const rightLeaf = workspace.getRightLeaf(false);
+        if (!rightLeaf) {
+          new Notice("Could not open sidebar view.");
+          return;
+        }
+        leaf = rightLeaf;
         await leaf.setViewState({ type: VIEW_TYPE_SIDEBAR, active: true });
       }
       workspace.revealLeaf(leaf);
@@ -195,8 +208,8 @@ export class IsHistoryPlugin extends Plugin {
     try {
       const cache = this.app.metadataCache.getFileCache(file);
       const fm = cache?.frontmatter;
-      const isArchive = file.path.startsWith(this.settings.archivePath);
-      const isVault = file.path.startsWith(this.settings.vaultPath);
+      const isArchive = file.path.startsWith(normalizePathSetting(this.settings.archivePath));
+      const isVault = file.path.startsWith(normalizePathSetting(this.settings.vaultPath));
 
       if (isArchive) {
         return getStatus(validateArchive(fm));
@@ -225,7 +238,7 @@ export class IsHistoryPlugin extends Plugin {
         new Notice(`${file.basename}: All fields valid!`);
       } else {
         new Notice(
-          `${file.basename}: ${result.errors.filter((e) => e.severity === "error").length} error(s), ${result.errors.filter((e) => e.severity === "warning").length} warning(s)`
+          `${file.basename}: ${result.errors.filter((err) => err.severity === "error").length} error(s), ${result.errors.filter((err) => err.severity === "warning").length} warning(s)`
         );
       }
     } catch (e) {
@@ -233,7 +246,7 @@ export class IsHistoryPlugin extends Plugin {
     }
   }
 
-  // ─── Shared Pre-flight (consolidated from 3 duplicates) ───
+  // ─── Shared Pre-flight ───
 
   async preflightFile(file: TFile): Promise<void> {
     if (!file) return;
@@ -241,7 +254,6 @@ export class IsHistoryPlugin extends Plugin {
       await this.app.fileManager.processFrontMatter(file, (fm) => {
         fm.draft = false;
         fm.status = "published";
-        // Only set date to today if no date is already specified
         if (!fm.date) {
           fm.date = new Date().toISOString().split("T")[0];
         }
@@ -265,7 +277,7 @@ export class IsHistoryPlugin extends Plugin {
     }
   }
 
-  // ─── New Post (consolidated from 2 duplicates) ───
+  // ─── New Post ───
 
   async newPost(track: TrackCode) {
     try {
@@ -287,16 +299,17 @@ export class IsHistoryPlugin extends Plugin {
       const seriesOrder = `${track}${nextNum}`;
 
       let slug = `${seriesOrder}-untitled-post`;
-      let path = `${this.settings.archivePath}/${slug}.md`;
+      let path = `${normalizePathSetting(this.settings.archivePath)}/${slug}.md`;
 
       // Avoid file path collision
       let suffix = 0;
       while (this.app.vault.getAbstractFileByPath(path)) {
         suffix++;
         slug = `${seriesOrder}-untitled-post-${suffix}`;
-        path = `${this.settings.archivePath}/${slug}.md`;
+        path = `${normalizePathSetting(this.settings.archivePath)}/${slug}.md`;
       }
 
+      const series = this.settings.defaultSeries || "";
       const content = `---
 title: "Untitled ${info.name} Post"
 date: ${new Date().toISOString().split("T")[0]}
@@ -304,7 +317,7 @@ description: ""
 draft: true
 tags: []
 image: "/images/${seriesOrder.toLowerCase()}-hero.jpg"
-series: "minds-and-machines"
+series: "${series}"
 seriesOrder: "${seriesOrder}"
 track: "${track}"
 status: "planned"
@@ -318,9 +331,8 @@ aliases: ["${seriesOrder}"]
 Start writing here...
 `;
 
-      await this.app.vault.create(path, content);
-      const file = this.app.vault.getAbstractFileByPath(path);
-      if (file) this.app.workspace.getLeaf(false).openFile(file as TFile);
+      const createdFile = await this.app.vault.create(path, content);
+      this.app.workspace.getLeaf(false).openFile(createdFile);
       new Notice(`Created ${seriesOrder} — fill in the frontmatter!`);
     } catch (e) {
       new Notice(`Failed to create: ${(e as Error).message}`);

@@ -4,7 +4,7 @@
  * Central type declarations shared across all modules.
  */
 
-import { TFile, MetadataCache, Vault, App } from "obsidian";
+import { TFile } from "obsidian";
 
 // ─── Track System ───
 
@@ -24,20 +24,6 @@ export const TRACKS: Record<TrackCode, TrackInfo> = {
 
 export const STATUSES = ["published", "upcoming", "planned"] as const;
 export type Status = (typeof STATUSES)[number];
-
-export interface SeriesDefinition {
-  name: string;
-  subtitle: string;
-  tracks: Record<TrackCode, number>;
-}
-
-export const SERIES: Record<string, SeriesDefinition> = {
-  "minds-and-machines": {
-    name: "Minds & Machines",
-    subtitle: "The Story of AI",
-    tracks: { A: 25, P: 25, E: 25 },
-  },
-};
 
 // ─── Validation ───
 
@@ -81,6 +67,7 @@ export interface ContentItem {
   image: string;
   tags: string[];
   aliases: string[];
+  // Vault-specific fields (undefined for archive items)
   publish: boolean | undefined;
   order: number | undefined;
   validation: ValidationResult;
@@ -118,6 +105,7 @@ export interface IsHistorySettings {
   vaultPath: string;
   cardsPerPage: number;
   showRibbonIcon: boolean;
+  defaultSeries: string;
 }
 
 export const DEFAULT_SETTINGS: IsHistorySettings = {
@@ -126,6 +114,7 @@ export const DEFAULT_SETTINGS: IsHistorySettings = {
   vaultPath: "src/content/vault",
   cardsPerPage: 40,
   showRibbonIcon: true,
+  defaultSeries: "minds-and-machines",
 };
 
 // ─── Frontmatter Schemas ───
@@ -135,21 +124,6 @@ export const ARCHIVE_REQUIRED: (keyof ArchiveFrontmatter)[] = [
   "date",
   "description",
 ];
-export const ARCHIVE_OPTIONAL: (keyof ArchiveFrontmatter)[] = [
-  "draft",
-  "tags",
-  "image",
-  "series",
-  "seriesOrder",
-  "track",
-  "status",
-  "part",
-  "figures",
-  "connects",
-  "era",
-  "aliases",
-];
-export const VAULT_REQUIRED: (keyof VaultFrontmatter)[] = ["title"];
 
 export interface ArchiveFrontmatter {
   title?: string;
@@ -179,4 +153,11 @@ export interface VaultFrontmatter {
   tags?: unknown;
   order?: number;
   relatedChapters?: string;
+}
+
+// ─── Utility ───
+
+/** Normalize a path setting: trim whitespace and remove trailing slashes. */
+export function normalizePathSetting(path: string): string {
+  return path.trim().replace(/\/+$/, "");
 }

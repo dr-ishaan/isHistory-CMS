@@ -3,6 +3,7 @@
  *
  * Full content management UI with differential rendering.
  * Only changed cards are re-rendered instead of full DOM rebuild.
+ * Supports multi-criterion AND filtering.
  */
 
 import { ItemView, type WorkspaceLeaf, Notice, Modal, TFile } from "obsidian";
@@ -13,14 +14,13 @@ import {
   TRACKS,
   DEFAULT_SETTINGS,
 } from "./types";
-import { ContentCache } from "./cache";
 import { IsHistoryPlugin } from "./main";
 
 export const VIEW_TYPE_DASHBOARD = "ishistory-dashboard";
 
 export class IsHistoryDashboardView extends ItemView {
   plugin: IsHistoryPlugin;
-  currentFilter = "all";
+  activeFilters: Set<string> = new Set(["all"]);
   searchQuery = "";
   private _visibleLimit: number;
   private _cardElements: Map<string, HTMLElement> = new Map();
@@ -155,7 +155,8 @@ export class IsHistoryDashboardView extends ItemView {
 
   private _getContainer(): HTMLElement | null {
     try {
-      return this.containerEl.children[1] as HTMLElement || this.containerEl.createDiv();
+      // Use querySelector for more semantic, resilient container lookup
+      return this.containerEl.querySelector(".view-content") as HTMLElement || this.containerEl.createDiv();
     } catch { return null; }
   }
 
@@ -168,6 +169,8 @@ export class IsHistoryDashboardView extends ItemView {
       desc: item.description, era: item.era, date: item.date,
       part: item.part, figures: item.figures, tags: item.tags,
       so: item.seriesOrder, errs: item.validation.errors.length,
+      connects: item.connects, image: item.image,
+      aliases: item.aliases, series: item.series,
     });
   }
 
@@ -211,23 +214,47 @@ export class IsHistoryDashboardView extends ItemView {
       const filterGroup = toolbar.createEl("div", { cls: "cms-filter-group" });
       const filters = [
         { key: "all", label: "All" },
-        { key: "archive", label: "📰 Archive" },
+        { key: "archive", label: "Archive" },
         { key: "track-A", label: "A Articles" },
         { key: "track-P", label: "P Profiles" },
         { key: "track-E", label: "E Events" },
-        { key: "vault", label: "🔒 Vault" },
+        { key: "vault", label: "Vault" },
         { key: "drafts", label: "Drafts" },
         { key: "errors", label: "Errors" },
       ];
       for (const f of filters) {
         const btn = filterGroup.createEl("button", {
           text: f.label,
-          cls: `cms-filter-btn ${this.currentFilter === f.key ? "cms-filter-btn-active" : ""}`,
+          cls: `cms-filter-btn ${this.activeFilters.has(f.key) ? "cms-filter-btn-active" : ""}`,
         });
         btn.addEventListener("click", () => {
-          this.currentFilter = f.key;
-          filterGroup.querySelectorAll(".cms-filter-btn").forEach((b) => b.removeClass("cms-filter-btn-active"));
-          btn.addClass("cms-filter-btn-active");
+          if (f.key === "all") {
+            // "All" clears all other filters
+            this.activeFilters.clear();
+            this.activeFilters.add("all");
+          } else {
+            this.activeFilters.delete("all");
+            if (this.activeFilters.has(f.key)) {
+              this.activeFilters.delete(f.key);
+            } else {
+              this.activeFilters.add(f.key);
+            }
+            // If no filters remain, default back to "all"
+            if (this.activeFilters.size === 0) {
+              this.activeFilters.add("all");
+            }
+          }
+          // Update button styles
+          filterGroup.querySelectorAll(".cms-filter-btn").forEach((b) => {
+            const btnEl = b as HTMLElement;
+            btnEl.removeClass("cms-filter-btn-active");
+          });
+          for (const key of this.activeFilters) {
+            const idx = filters.findIndex((fi) => fi.key === key);
+            if (idx >= 0) {
+              filterGroup.children[idx]?.addClass("cms-filter-btn-active");
+            }
+          }
           this.applyFilters();
         });
       }
@@ -281,7 +308,7 @@ export class IsHistoryDashboardView extends ItemView {
     }
   }
 
-  // ─── DIFFERENTIAL UPDATE (core improvement) ───
+  // ─── DIFFERENTIAL UPDATE ───
 
   private _differentialUpdate(): void {
     if (!this._gridEl || this._destroyed) return;
@@ -316,6 +343,7 @@ export class IsHistoryDashboardView extends ItemView {
         const parent = existingCard.parentElement;
         const nextSibling = existingCard.nextSibling;
         existingCard.remove();
+        // Build card off-DOM then insert
         const newCard = this._buildCardDOM(item);
         if (parent) {
           parent.insertBefore(newCard, nextSibling);
@@ -323,7 +351,6 @@ export class IsHistoryDashboardView extends ItemView {
         this._cardElements.set(item.path, newCard);
         this._itemSnapshots.set(item.path, newSnapshot);
       }
-      // If snapshot matches, skip — no DOM work needed
     }
 
     // 3. Update stats
@@ -363,7 +390,9 @@ export class IsHistoryDashboardView extends ItemView {
   // ─── Card DOM Building ───
 
   private _buildCardDOM(item: ContentItem): HTMLElement {
-    const card = this._gridEl!.createEl("div", {
+    // Build card off-DOM using a document fragment to avoid flicker
+    const tempDiv = document.createElement("div");
+    const card = tempDiv.createEl("div", {
       cls: `cms-card cms-card-${item.validation.status} cms-card-${item.collection}${item.track ? " cms-card-track-" + item.track : ""}`,
       attr: {
         "data-path": item.path,
@@ -394,7 +423,7 @@ export class IsHistoryDashboardView extends ItemView {
         cls: "cms-badge cms-badge-track",
       });
     } else if (item.track) {
-      badgeArea.createEl("span", { text: "❓ Custom Track", cls: "cms-badge cms-badge-track" });
+      badgeArea.createEl("span", { text: "Custom Track", cls: "cms-badge cms-badge-track" });
     }
     badgeArea.createEl("span", {
       text: item.validation.label,
@@ -462,7 +491,7 @@ export class IsHistoryDashboardView extends ItemView {
           new Notice(
             r.errors.length === 0
               ? `${item.seriesOrder || item.name}: All fields valid!`
-              : `${item.seriesOrder || item.name}: ${r.errors.filter((e) => e.severity === "error").length} error(s), ${r.errors.filter((e) => e.severity === "warning").length} warning(s)`
+              : `${item.seriesOrder || item.name}: ${r.errors.filter((err) => err.severity === "error").length} error(s), ${r.errors.filter((err) => err.severity === "warning").length} warning(s)`
           );
         } catch (e) { new Notice(`Validation failed: ${(e as Error).message}`); }
       });
@@ -472,6 +501,7 @@ export class IsHistoryDashboardView extends ItemView {
         .addEventListener("click", () => this.plugin.preflightFile(item.file));
     }
 
+    // Extract the built card element
     return card;
   }
 
@@ -479,6 +509,8 @@ export class IsHistoryDashboardView extends ItemView {
     if (!this._gridEl) return null;
     try {
       const card = this._buildCardDOM(item);
+      // Append the built card to the actual grid
+      this._gridEl.appendChild(card);
       this._cardElements.set(item.path, card);
       return card;
     } catch (e) { console.error(e); return null; }
@@ -510,14 +542,13 @@ export class IsHistoryDashboardView extends ItemView {
 
   applyFilters(): void {
     try {
-      const filter = this.currentFilter;
       const search = this.searchQuery.toLowerCase().trim();
       let visibleCount = 0;
 
       for (const [path, cardEl] of this._cardElements) {
         const item = this.plugin.cache.items.get(path);
         if (!item) { cardEl.style.display = "none"; continue; }
-        const matches = this.plugin.cache.matchesFilter(item, filter, search);
+        const matches = this.plugin.cache.matchesFilter(item, this.activeFilters, search);
         const beyondPage = matches && visibleCount >= this._visibleLimit;
         if (matches) visibleCount++;
         cardEl.style.display = !matches || beyondPage ? "none" : "";
@@ -532,7 +563,7 @@ export class IsHistoryDashboardView extends ItemView {
     } catch (e) { console.error(e); }
   }
 
-  // ─── Meta Section ───
+  // ─── Meta Section (optimized O(n+m)) ───
 
   private _renderMetaSection(container: HTMLElement): void {
     if (!container) return;
@@ -546,13 +577,25 @@ export class IsHistoryDashboardView extends ItemView {
       const items = this.plugin.cache.getSortedItems();
       const section = container.createEl("div", { cls: "cms-meta-section" });
 
+      // Pre-compute era counts for O(n) instead of O(n*m)
+      const eraCounts = new Map<string, number>();
+      const tagCounts = new Map<string, number>();
+      for (const item of items) {
+        if (item.era) {
+          eraCounts.set(item.era, (eraCounts.get(item.era) || 0) + 1);
+        }
+        for (const tag of item.tags) {
+          tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+        }
+      }
+
       if (stats.allEras.length > 0) {
         const block = section.createEl("div", { cls: "cms-meta-block" });
         block.createEl("h4", { text: `Eras (${stats.allEras.length})`, cls: "cms-meta-heading" });
         const list = block.createEl("div", { cls: "cms-tag-list" });
         for (const era of stats.allEras.sort()) {
           list.createEl("span", {
-            text: `${era} (${items.filter((i) => i.era === era).length})`,
+            text: `${era} (${eraCounts.get(era) || 0})`,
             cls: "cms-tag-chip cms-era-chip",
           });
         }
@@ -564,7 +607,7 @@ export class IsHistoryDashboardView extends ItemView {
         const list = block.createEl("div", { cls: "cms-tag-list" });
         for (const tag of stats.uniqueTags.sort().slice(0, 30)) {
           list.createEl("span", {
-            text: `${tag} (${items.filter((i) => i.tags.includes(tag)).length})`,
+            text: `${tag} (${tagCounts.get(tag) || 0})`,
             cls: "cms-tag-chip",
           });
         }

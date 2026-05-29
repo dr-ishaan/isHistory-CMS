@@ -2,10 +2,11 @@
  * isHistory CMS Plugin — Sidebar View
  *
  * Context-aware validation panel for the currently active file.
+ * Subscribes to file changes, deletions, and renames.
  */
 
-import { ItemView, type WorkspaceLeaf, Notice } from "obsidian";
-import { type IsHistorySettings, TRACKS } from "./types";
+import { ItemView, type WorkspaceLeaf, Notice, type TFile } from "obsidian";
+import { type IsHistorySettings, TRACKS, normalizePathSetting } from "./types";
 import { IsHistoryPlugin } from "./main";
 
 export const VIEW_TYPE_SIDEBAR = "ishistory-sidebar";
@@ -42,6 +43,24 @@ export class IsHistorySidebarView extends ItemView {
       })
     );
 
+    // Handle file deletion — clear sidebar if active file was deleted
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        if (!this.app.workspace.layoutReady || this._destroyed) return;
+        const active = this.app.workspace.getActiveFile();
+        if (!active || file.path === active.path) this._debounceUpdate();
+      })
+    );
+
+    // Handle file rename — refresh if renamed file is active
+    this.registerEvent(
+      this.app.vault.on("rename", (file) => {
+        if (!this.app.workspace.layoutReady || this._destroyed) return;
+        const active = this.app.workspace.getActiveFile();
+        if (active && file.path === active.path) this._debounceUpdate();
+      })
+    );
+
     if (this.app.workspace.layoutReady) {
       this._debounceUpdate();
     } else {
@@ -62,7 +81,7 @@ export class IsHistorySidebarView extends ItemView {
   updateUI(): void {
     if (this._destroyed) return;
     try {
-      const container = this.containerEl.children[1] as HTMLElement;
+      const container = this.containerEl.querySelector(".view-content") as HTMLElement;
       if (!container) return;
       container.empty();
       container.addClass("ishistory-sidebar");
@@ -82,7 +101,7 @@ export class IsHistorySidebarView extends ItemView {
         return;
       }
 
-      const collection = activeFile.path.startsWith(settings.archivePath)
+      const collection = activeFile.path.startsWith(normalizePathSetting(settings.archivePath))
         ? "archive"
         : "vault";
       const cached = this.plugin.cache.items.get(activeFile.path);
