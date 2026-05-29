@@ -20,41 +20,44 @@ Here's what you get:
 | **Quick validate sidebar** | See errors on the post you're currently editing |
 | **Bulk pre-flight** | Mark many draft posts as ready for deployment at once |
 | **Track system** | Organize posts by type — articles, profiles, or events |
+| **Status bar** | See your content health at a glance in Obsidian's status bar |
+| **Sort & filter** | Find posts fast with sort options, search, and filters |
+| **Context menus** | Right-click files for quick validate and pre-flight actions |
+| **Safe upgrades** | Settings automatically merge when you update — nothing is lost |
 
 ---
 
-## Installation (Using BRAT)
+## Installation
 
-BRAT is a tool that lets you install Obsidian plugins that aren't in the official store yet. Here's how to set it up:
-
-### Step 1: Install BRAT
+### Option 1: Community Plugin Store (Recommended)
 
 1. Open Obsidian
 2. Go to **Settings** (the gear icon in the bottom left)
 3. Click **Community plugins**
 4. Click **Browse**
-5. Search for **"BRAT"**
+5. Search for **"isHistory CMS"**
 6. Click **Install**, then click **Enable**
 
-### Step 2: Add This Plugin Using BRAT
+### Option 2: Manual Install
 
-1. Still in **Settings → Community plugins**
-2. Find **BRAT** in your installed plugins list and click the gear icon next to it
-3. Click **Add Beta plugin**
-4. Paste this exact URL:
-   ```
-   https://github.com/dr-ishaan/astro-cms-obsidian-plugin
-   ```
-5. Click **Add Plugin**
-6. Go back to **Community plugins** and enable **"isHistory CMS"**
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/dr-ishaan/astro-cms-obsidian-plugin/releases/latest)
+2. Create a folder at `.obsidian/plugins/ishistory-cms/` in your vault
+3. Place the three files inside that folder
+4. Open **Settings → Community plugins** and enable **"isHistory CMS"**
 
-### Step 3: Open the Dashboard
+### Option 3: BRAT (For Beta Testers)
+
+1. Install the [BRAT](https://github.com/TfTHacker/obsidian42-brat) plugin
+2. Go to BRAT settings → **Add Beta plugin**
+3. Paste: `https://github.com/dr-ishaan/astro-cms-obsidian-plugin`
+4. Click **Add Plugin**
+5. Enable **"isHistory CMS"** in Community plugins
+
+### After Installation
 
 1. Look at the left sidebar in Obsidian — you'll see a new dashboard icon
 2. Click it to open your Astro CMS dashboard
 3. Or press `Ctrl+P` (or `Cmd+P` on Mac) and search for **"Open isHistory dashboard"**
-
-That's it! You're up and running.
 
 ---
 
@@ -154,8 +157,8 @@ Your research note content goes here...
 |---|---|---|
 | `series` | Which series this post belongs to | `"minds-and-machines"` |
 | `seriesOrder` | The chapter code within the series | `"A1"` |
-| `track` | Which track: `A` (Articles), `P` (Profiles), or `E` (Events) | `"A"` |
-| `status` | Publication status: `published`, `upcoming`, or `planned` | `"published"` |
+| `track` | Which track: `A` (Articles), `P` (Profiles), or `E` (Events) — or any custom track you define | `"A"` |
+| `status` | Publication status: `published`, `upcoming`, or `planned` — or any custom status you define | `"published"` |
 | `part` | The act/part label | `"Part I · The Dream"` |
 
 ### Connection Fields (Help Link Posts Together)
@@ -189,6 +192,8 @@ The plugin checks your posts and shows you exactly what's wrong. Here are the mo
 | Has series but no order | `series` is set but `seriesOrder` is missing | Add `seriesOrder: "A1"` |
 | Missing description | No `description` field | Add `description: "Your description here"` |
 | Draft + published conflict | `draft: true` but `status: "published"` | Set `draft: false` or `status: "upcoming"` |
+| Invalid track code | `track` is not one of your defined tracks | Use a track code from Settings |
+| seriesOrder track mismatch | `seriesOrder` starts with a different track letter than `track` | Make them match |
 
 ---
 
@@ -199,7 +204,7 @@ The plugin checks your posts and shows you exactly what's wrong. Here are the mo
 At the top of the dashboard, you'll see:
 - **Archive** — Number of blog/archive posts
 - **Vault** — Number of research notes
-- **A Articles** / **P Profiles** / **E Events** — Posts per track
+- **Track counts** — Posts per track (dynamic, from your settings)
 - **Drafts** — Posts with `draft: true`
 - **Errors** — Posts missing required fields
 - **Ready** — Posts that pass all checks
@@ -207,7 +212,9 @@ At the top of the dashboard, you'll see:
 ### Search and Filter
 
 - **Search box** — Type to find posts by title, tag, era, or file path
-- **Filter buttons** — Click to show only: All, Archive, Articles, Profiles, Events, Vault, Drafts, Errors
+- **Filter buttons** — Click to show only: All, Archive, track codes, Vault, Drafts, Recent, Errors
+- **Sort dropdown** — Sort by Series Order, Newest, Oldest, Title A-Z, Errors First, Drafts First
+- **Search debounce** — Search waits 200ms before filtering to keep things smooth
 
 ### Card Actions
 
@@ -219,6 +226,21 @@ Each post card has buttons:
 ### Bulk Pre-flight
 
 Click the **Bulk pre-flight all drafts** command to mark all drafts as ready for deployment. It will ask you to confirm first.
+
+### Right-click Context Menus
+
+Right-click on a file in the file explorer or editor to quickly:
+- **Validate with isHistory** — Check the post for errors
+- **Pre-flight with isHistory** — Mark the post as ready for deployment
+- **Open in isHistory Dashboard** — Jump to the dashboard
+
+### Status Bar
+
+The status bar at the bottom of Obsidian shows your content health:
+- **"N ready"** (green) — All posts are valid
+- **"N warnings"** (yellow) — Some posts have warnings
+- **"N errors"** (red) — Some posts have errors that need fixing
+- Click the status bar to open the dashboard
 
 ---
 
@@ -243,9 +265,7 @@ You can access these from the command palette (`Ctrl+P` or `Cmd+P`):
 | `Open quick validate` | Opens the sidebar validator |
 | `Validate current post` | Checks the post you're editing for errors |
 | `Pre-flight current draft` | Marks the draft you're editing as ready for deployment |
-| `New article (A-track)` | Creates a new article post |
-| `New profile (P-track)` | Creates a new profile post |
-| `New event (E-track)` | Creates a new event post |
+| `New [Track] post` | Creates a new post for each track (one command per track) |
 | `Validate all content` | Validates all content and shows summary |
 | `Bulk pre-flight all drafts` | Marks all draft posts as ready for deployment |
 
@@ -269,18 +289,99 @@ You can also use any other Git sync method you prefer — the plugin only manage
 
 Go to **Settings → isHistory CMS** to configure:
 
-### Deploying to your site
-- **Open Obsidian Git** — Opens Obsidian Git settings if installed, or opens the install page. This plugin manages frontmatter and validation only; you need Git sync to deploy.
-
-### Content paths
+### Content Paths
 - **Archive path** — Path to blog/archive content. Default: `src/content/blog`
 - **Vault path** — Path to vault/research content. Default: `src/content/vault`
 
-### Performance
-- **Cards per page** — How many post cards to show before the "Load more" button. Default: 40. Lower values are faster.
+### Tracks
+- Add, edit, or remove tracks with custom codes, names, emojis, and colors
+- Each track gets its own "New post" command automatically
+- **Warning** when deleting a track that has posts assigned to it
+- Reset all tracks to defaults with one click
 
-### Appearance
-- **Show ribbon icon** — Show the dashboard icon in the left ribbon. Default: On
+### Post Statuses
+- Add or remove publication statuses (e.g., `published`, `upcoming`, `planned`)
+- Statuses appear as filter options and in pre-flight settings
+
+### Validation Rules
+- **Min/Max title length** — Configurable thresholds for SEO compliance
+- **Min/Max description length** — Meta description validation
+- **Image path prefix** — Require hero images to start with `/` or another prefix
+- **Required archive fields** — Add or remove fields that every archive post must have
+- **Cross-field validation** — Warns when settings conflict (e.g., min > max, same paths)
+
+### Card Display
+- **Cards per page** — How many cards before "Load More"
+- **Description preview length** — Characters shown before truncation
+- **Figures preview length** — Characters shown for figures field
+- **Tags per card** — Maximum tags displayed
+- **Errors per card** — Maximum errors displayed
+- **Tags in meta section** — Maximum unique tags in the dashboard footer
+
+### New Post Template
+- **Template variables** — Use `{{seriesOrder}}`, `{{trackName}}`, `{{date}}`, etc.
+- **Slug format** — File name pattern for new posts
+- **Title format** — Default title for new posts
+- **Image path format** — Hero image pattern
+- **Default status** — Status for newly created posts
+- **Body template** — Default content below the frontmatter
+
+### Pre-flight Settings
+- **Set draft flag to** — What `draft` becomes when pre-flighting
+- **Set status to** — What `status` becomes when pre-flighting
+- **Auto-set date** — Automatically fill in today's date if missing
+
+### Settings Validation
+The settings page shows warnings when:
+- Min length ≥ max length for any field
+- No tracks or statuses are defined
+- Archive path and vault path are the same
+
+---
+
+## Version History
+
+### v1.6.0 — Trust & Workflow 🛡️
+- **Pre-flight Validation Gate** — Warns about errors before publishing
+- **Track Deletion Warning** — Shows how many posts use a track before deleting
+- **Failed Save Notice** — Alerts when settings can't be saved
+- **Cross-field Settings Validation** — Catches conflicting settings
+- **Deep-merge Settings** — Safe upgrades without data loss
+- **Status Bar Health Indicator** — Content health at a glance
+- **Sort Options Dropdown** — Six sort modes in the dashboard
+- **Recently Modified Filter** — Posts edited in the last 24 hours
+- **Right-click Context Menus** — Quick actions on files
+- **Search Debounce (200ms)** — Smooth search performance
+
+### v1.5.0 — Settings That Make Sense ✨
+- Full settings UX overhaul (no more sliders)
+- Dynamic track system with custom codes, emojis, and colors
+- Template engine with variable substitution
+- Chip editors for statuses and required fields
+- Color pickers and reset buttons
+
+### v1.4.0 — Your Tracks, Your Way 🎨
+- Dynamic track system — create any track type
+- Color-coded tracks in dashboard and stats
+- Regex-based scanning derived from track codes
+
+### v1.3.0 — The Big Picture 🖼️
+- Dashboard view for browsing all posts
+- Search, filter, and stats bar
+- Pagination with "Load More"
+
+### v1.2.0 — Side by Side 📖
+- Sidebar view for real-time validation
+- Auto-updates when switching files
+
+### v1.1.0 — Bug Squashing 🐛
+- Fixed plugin freeze on file open
+- Fixed sidebar not updating
+- Fixed floating promise errors
+
+### v1.0.0 — The Beginning 🐣
+- Initial release with isHistory toggle
+- Basic frontmatter management and validation
 
 ---
 
@@ -296,10 +397,9 @@ That's normal! In BRAT, "(frozen)" just means the plugin is pinned to a specific
 
 ### How do I update the plugin?
 
-1. Go to **Settings → Community plugins**
-2. Click the gear icon next to **BRAT**
-3. Click **Check for updates**
-4. If there's a new version, it will update automatically
+**Community Store:** Settings → Community Plugins → Click "Check for updates" → Update
+**Manual:** Download the latest release files and replace the old ones.
+**BRAT:** BRAT settings → Check for updates → Update.
 
 ### The plugin is slow with many posts
 
@@ -308,6 +408,14 @@ Go to **Settings → isHistory CMS** and lower the **Cards per page** number. Tr
 ### I clicked Pre-flight but my site didn't update
 
 Pre-flight only changes frontmatter in your vault. You still need to sync your vault to Git (using Obsidian Git or another tool) for your Astro site to rebuild and deploy. See the **Deploying to Your Site** section above.
+
+### Will updating the plugin delete my settings?
+
+No! The plugin uses a deep-merge strategy that reads your existing settings, keeps everything you configured, and only adds any new fields that didn't exist before. Your settings are always safe.
+
+### Do I need to know regex to use custom tracks?
+
+No! The default settings work great out of the box. Regex is only used internally to match seriesOrder patterns based on your track codes. You just pick a short code (like "A", "P", "E") and the plugin handles the rest.
 
 ---
 
@@ -320,6 +428,15 @@ This plugin is designed for the **isHistory** Astro project — a deep-dive into
 - **Series system**: Articles (A), Profiles (P), Events (E) — each organized into tracks
 
 But it works with any Astro project that uses content collections!
+
+---
+
+## Security
+
+- Release assets are built via GitHub Actions with **artifact attestations** for cryptographic provenance verification
+- No `innerHTML` usage — all DOM manipulation uses Obsidian's `createEl` API
+- No `!important` in CSS — proper selector specificity is used instead
+- No `builtin-modules` npm dependency — uses Node.js built-in `module.builtinModules`
 
 ---
 
