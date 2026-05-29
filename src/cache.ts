@@ -2,8 +2,8 @@
  * isHistory CMS Plugin — Content Cache
  *
  * Dual-collection, incremental content index.
- * Manages in-memory content items with stats caching.
- * Supports multi-criterion AND filtering.
+ * v1.5.0: Fully dynamic tracks, statuses, and regex patterns
+ * derived from settings rather than hardcoded constants.
  */
 
 import { type App, type TFile } from "obsidian";
@@ -17,6 +17,8 @@ import {
   type ArchiveFrontmatter,
   type VaultFrontmatter,
   normalizePathSetting,
+  getValidationConfig,
+  buildSeriesOrderRegex,
 } from "./types";
 import { validateArchive, validateVault, getStatus } from "./validator";
 
@@ -44,19 +46,21 @@ export class ContentCache {
 
       const cache = app.metadataCache.getFileCache(file);
       const fm = cache?.frontmatter || {};
+      const config = getValidationConfig(settings);
 
       // Validate using the correct schema
       let validation: ValidationResult;
       if (collection === "archive") {
-        validation = getStatus(validateArchive(fm as ArchiveFrontmatter | null));
+        validation = getStatus(validateArchive(fm as ArchiveFrontmatter | null, config));
       } else {
-        validation = getStatus(validateVault(fm as VaultFrontmatter | null));
+        validation = getStatus(validateVault(fm as VaultFrontmatter | null, config));
       }
 
-      // Derive track from seriesOrder if track field missing
+      // Derive track from seriesOrder if track field missing (dynamic regex)
       let track: TrackCode | null = fm.track || null;
+      const seriesRegex = buildSeriesOrderRegex(settings.tracks);
       if (!track && fm.seriesOrder && typeof fm.seriesOrder === "string") {
-        const m = fm.seriesOrder.match(/^([APE])/);
+        const m = fm.seriesOrder.match(seriesRegex);
         if (m) track = m[1] as TrackCode;
       }
 
@@ -179,9 +183,9 @@ export class ContentCache {
     });
   }
 
-  // ─── Statistics ───
+  // ─── Statistics (dynamic tracks) ───
 
-  getStats(): CacheStats {
+  getStats(settings: IsHistorySettings): CacheStats {
     if (!this._statsDirty && this._stats) return this._stats;
 
     try {
@@ -189,12 +193,12 @@ export class ContentCache {
       const archive = items.filter((i) => i.collection === "archive");
       const vault = items.filter((i) => i.collection === "vault");
 
-      const byTrack = {
-        A: archive.filter((i) => i.track === "A"),
-        P: archive.filter((i) => i.track === "P"),
-        E: archive.filter((i) => i.track === "E"),
-        none: archive.filter((i) => !i.track),
-      };
+      // Dynamic track counts from settings
+      const trackCounts: Record<string, number> = {};
+      for (const code of Object.keys(settings.tracks)) {
+        trackCounts[code] = archive.filter((i) => i.track === code).length;
+      }
+      trackCounts["none"] = archive.filter((i) => !i.track).length;
 
       const stats: CacheStats = {
         total: items.length,
@@ -207,10 +211,7 @@ export class ContentCache {
         ready: items.filter((i) => i.validation.status === "ready").length,
         errors: items.filter((i) => i.validation.status === "error").length,
         warnings: items.filter((i) => i.validation.status === "warning").length,
-        trackA: byTrack.A.length,
-        trackP: byTrack.P.length,
-        trackE: byTrack.E.length,
-        trackNone: byTrack.none.length,
+        trackCounts,
         uniqueTags: [...new Set(items.flatMap((i) => i.tags))],
         allEras: [...new Set(archive.map((i) => i.era).filter((e): e is string => !!e))],
         allSeries: [...new Set(archive.map((i) => i.series).filter((s): s is string => !!s))],
@@ -224,28 +225,29 @@ export class ContentCache {
       return {
         total: 0, archiveTotal: 0, vaultTotal: 0, drafts: 0,
         published: 0, upcoming: 0, planned: 0, ready: 0,
-        errors: 0, warnings: 0, trackA: 0, trackP: 0,
-        trackE: 0, trackNone: 0, uniqueTags: [], allEras: [],
-        allSeries: [],
+        errors: 0, warnings: 0, trackCounts: {},
+        uniqueTags: [], allEras: [], allSeries: [],
       };
     }
   }
 
-  // ─── Sorting ───
+  // ─── Sorting (dynamic regex) ───
 
-  getSortedItems(collection?: CollectionType): ContentItem[] {
+  getSortedItems(collection?: CollectionType, tracks?: Record<string, unknown>): ContentItem[] {
     const items = [...this.items.values()];
     const filtered = collection
       ? items.filter((i) => i.collection === collection)
       : items;
+    const trackKeys = tracks ? Object.keys(tracks) : ["A", "P", "E"];
 
     return filtered.sort((a, b) => {
       const ao = a.seriesOrder || "";
       const bo = b.seriesOrder || "";
 
       if (ao && bo) {
+        const codes = trackKeys.join("");
         const parseOrder = (s: string) => {
-          const m = s.match(/^([APE])(\d+)$/);
+          const m = s.match(new RegExp(`^([${codes}])(\\d+)$`));
           return m ? { track: m[1], num: parseInt(m[2], 10) } : null;
         };
         const pa = parseOrder(ao);
@@ -269,11 +271,9 @@ export class ContentCache {
     activeFilters: Set<string>,
     searchQuery: string
   ): boolean {
-    // If "all" is in the active filters, skip filter checks (but still apply search)
     const hasAll = activeFilters.has("all");
 
     if (!hasAll) {
-      // All active filters must match (AND logic)
       for (const filter of activeFilters) {
         if (!this._matchesSingleFilter(item, filter)) return false;
       }
@@ -297,17 +297,15 @@ export class ContentCache {
   private _matchesSingleFilter(item: ContentItem, filter: string): boolean {
     if (filter === "archive" && item.collection !== "archive") return false;
     if (filter === "vault" && item.collection !== "vault") return false;
-    if (filter === "track-A" && item.track !== "A") return false;
-    if (filter === "track-P" && item.track !== "P") return false;
-    if (filter === "track-E" && item.track !== "E") return false;
+    // Dynamic track filters: "track-A", "track-P", etc.
+    if (filter.startsWith("track-")) {
+      const code = filter.slice(6);
+      if (item.track !== code) return false;
+    }
     if (filter === "drafts" && item.draft !== true) return false;
-    if (filter === "published" && item.status !== "published") return false;
-    if (filter === "upcoming" && item.status !== "upcoming") return false;
-    if (filter === "planned" && item.status !== "planned") return false;
     if (filter === "ready" && item.validation.status !== "ready") return false;
     if (filter === "errors" && item.validation.status !== "error") return false;
-    if (filter === "warnings" && item.validation.status !== "warning")
-      return false;
+    if (filter === "warnings" && item.validation.status !== "warning") return false;
     return true;
   }
 

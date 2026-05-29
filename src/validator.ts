@@ -4,6 +4,8 @@
  * Validates frontmatter for archive and vault collections
  * against the content schema. All rules are pure functions
  * with clear inputs and outputs for testability.
+ * v1.5.0: Fully parameterized — all thresholds and track/status
+ * values come from ValidationConfig, not hardcoded constants.
  */
 
 import {
@@ -11,15 +13,15 @@ import {
   type ValidationResult,
   type ArchiveFrontmatter,
   type VaultFrontmatter,
-  TRACKS,
-  STATUSES,
+  type ValidationConfig,
+  DEFAULT_VALIDATION_CONFIG,
+  buildSeriesOrderRegex,
+  buildConnectsRefRegex,
 } from "./types";
 
 // ─── Helper: normalize tags (YAML shorthand → array) ───
 
 function normalizeTags(tags: unknown): unknown {
-  // Obsidian/YAML allows `tags: ai` as shorthand for `tags: [ai]`
-  // A bare string should be treated as a single-element array.
   if (typeof tags === "string") {
     return [tags];
   }
@@ -28,7 +30,10 @@ function normalizeTags(tags: unknown): unknown {
 
 // ─── Archive Validation ───
 
-export function validateArchive(fm: ArchiveFrontmatter | null | undefined): ValidationError[] {
+export function validateArchive(
+  fm: ArchiveFrontmatter | null | undefined,
+  config: ValidationConfig = DEFAULT_VALIDATION_CONFIG,
+): ValidationError[] {
   const errors: ValidationError[] = [];
 
   if (!fm) {
@@ -41,16 +46,16 @@ export function validateArchive(fm: ArchiveFrontmatter | null | undefined): Vali
   }
 
   // title
-  if (!fm.title || typeof fm.title !== "string" || fm.title.trim().length < 5) {
+  if (!fm.title || typeof fm.title !== "string" || fm.title.trim().length < config.minTitleLength) {
     errors.push({
       field: "title",
-      message: "Required. Must be at least 5 characters for SEO.",
+      message: `Required. Must be at least ${config.minTitleLength} characters for SEO.`,
       severity: "error",
     });
-  } else if (fm.title.length > 120) {
+  } else if (fm.title.length > config.maxTitleLength) {
     errors.push({
       field: "title",
-      message: `Too long (${fm.title.length}/120 chars). Keep titles concise.`,
+      message: `Too long (${fm.title.length}/${config.maxTitleLength} chars). Keep titles concise.`,
       severity: "warning",
     });
   }
@@ -80,35 +85,35 @@ export function validateArchive(fm: ArchiveFrontmatter | null | undefined): Vali
   if (
     !fm.description ||
     typeof fm.description !== "string" ||
-    fm.description.trim().length < 15
+    fm.description.trim().length < config.minDescriptionLength
   ) {
     errors.push({
       field: "description",
-      message: "Required. Must be at least 15 characters for SEO meta.",
+      message: `Required. Must be at least ${config.minDescriptionLength} characters for SEO meta.`,
       severity: "error",
     });
-  } else if (fm.description.length > 160) {
+  } else if (fm.description.length > config.maxDescriptionLength) {
     errors.push({
       field: "description",
-      message: `Too long (${fm.description.length}/160 chars). Will be truncated in search results.`,
+      message: `Too long (${fm.description.length}/${config.maxDescriptionLength} chars). Will be truncated in search results.`,
       severity: "warning",
     });
   }
 
-  // track
-  if (fm.track && !(fm.track in TRACKS)) {
+  // track (dynamic — validated against config.tracks)
+  if (fm.track && !(fm.track in config.tracks)) {
     errors.push({
       field: "track",
-      message: `Invalid track "${fm.track}". Must be A, P, or E.`,
+      message: `Invalid track "${fm.track}". Must be one of: ${Object.keys(config.tracks).join(", ")}.`,
       severity: "error",
     });
   }
 
-  // status
-  if (fm.status && !STATUSES.includes(fm.status as (typeof STATUSES)[number])) {
+  // status (dynamic — validated against config.statuses)
+  if (fm.status && !config.statuses.includes(fm.status)) {
     errors.push({
       field: "status",
-      message: `Invalid status "${fm.status}". Must be published, upcoming, or planned.`,
+      message: `Invalid status "${fm.status}". Must be one of: ${config.statuses.join(", ")}.`,
       severity: "error",
     });
   }
@@ -129,13 +134,14 @@ export function validateArchive(fm: ArchiveFrontmatter | null | undefined): Vali
     });
   }
 
-  // seriesOrder format check
+  // seriesOrder format check (dynamic regex from track codes)
   if (fm.seriesOrder && typeof fm.seriesOrder === "string") {
-    const match = fm.seriesOrder.match(/^([APE])(\d+)$/);
+    const match = fm.seriesOrder.match(buildSeriesOrderRegex(config.tracks));
     if (!match) {
+      const codes = Object.keys(config.tracks).join(", ");
       errors.push({
         field: "seriesOrder",
-        message: `Format should be track+number (e.g. "A1", "P3", "E14"). Got "${fm.seriesOrder}".`,
+        message: `Format should be track+number (e.g. "${Object.keys(config.tracks)[0] || "A"}1"). Got "${fm.seriesOrder}". Valid tracks: ${codes}.`,
         severity: "warning",
       });
     } else {
@@ -164,7 +170,7 @@ export function validateArchive(fm: ArchiveFrontmatter | null | undefined): Vali
   if (normalizedTags !== undefined && !Array.isArray(normalizedTags)) {
     errors.push({
       field: "tags",
-      message: 'Must be a YAML list: [tag1, tag2, tag3]',
+      message: "Must be a YAML list: [tag1, tag2, tag3]",
       severity: "error",
     });
   }
@@ -178,38 +184,57 @@ export function validateArchive(fm: ArchiveFrontmatter | null | undefined): Vali
     });
   }
 
-  // image path
-  if (fm.image && typeof fm.image === "string" && !fm.image.startsWith("/")) {
+  // image path (configurable prefix)
+  if (fm.image && typeof fm.image === "string" && !fm.image.startsWith(config.imagePrefix)) {
     errors.push({
       field: "image",
-      message: "Hero image path should start with / (e.g. /images/a1-hero.jpg)",
+      message: `Hero image path should start with ${config.imagePrefix} (e.g. ${config.imagePrefix}images/a1-hero.jpg)`,
       severity: "warning",
     });
   }
 
-  // connects format hint
+  // connects format hint (dynamic regex from track codes)
   if (fm.connects && typeof fm.connects === "string") {
+    const refRegex = buildConnectsRefRegex(config.tracks);
     const parts = fm.connects
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s);
-    const badRefs = parts.filter((p) => !p.match(/^[APE]\d+$/));
+    const badRefs = parts.filter((p) => !p.match(refRegex));
     if (badRefs.length > 0) {
       errors.push({
         field: "connects",
-        message: `Invalid references: ${badRefs.join(", ")}. Use format "P1, A5, E3".`,
+        message: `Invalid references: ${badRefs.join(", ")}. Use format "${Object.keys(config.tracks)[0] || "A"}1, ${Object.keys(config.tracks)[1] || "P"}5".`,
         severity: "warning",
       });
     }
   }
 
-  // figures should be non-empty for profiles
-  if (fm.track === "P" && (!fm.figures || fm.figures.trim() === "")) {
-    errors.push({
-      field: "figures",
-      message: "Profiles should list the key historic figure(s).",
-      severity: "warning",
-    });
+  // figures should be non-empty for profiles (or any track that needs it)
+  // Check if the track's name contains "profile" or "Profile" as a hint
+  if (fm.track && config.tracks[fm.track]) {
+    const trackInfo = config.tracks[fm.track];
+    if (trackInfo.name.toLowerCase().includes("profile") && (!fm.figures || fm.figures.trim() === "")) {
+      errors.push({
+        field: "figures",
+        message: `${trackInfo.name} should list the key historic figure(s).`,
+        severity: "warning",
+      });
+    }
+  }
+
+  // Check additional required fields from config
+  for (const field of config.requiredArchiveFields) {
+    // Skip fields already validated with rich rules above
+    if (field === "title" || field === "date" || field === "description") continue;
+    const value = (fm as Record<string, unknown>)[field];
+    if (value === undefined || value === null || value === "") {
+      errors.push({
+        field,
+        message: `Required field "${field}" is missing or empty.`,
+        severity: "error",
+      });
+    }
   }
 
   return errors;
@@ -217,7 +242,10 @@ export function validateArchive(fm: ArchiveFrontmatter | null | undefined): Vali
 
 // ─── Vault Validation ───
 
-export function validateVault(fm: VaultFrontmatter | null | undefined): ValidationError[] {
+export function validateVault(
+  fm: VaultFrontmatter | null | undefined,
+  _config: ValidationConfig = DEFAULT_VALIDATION_CONFIG,
+): ValidationError[] {
   const errors: ValidationError[] = [];
 
   if (!fm) {
@@ -268,7 +296,7 @@ export function validateVault(fm: VaultFrontmatter | null | undefined): Validati
   if (normalizedTags !== undefined && !Array.isArray(normalizedTags)) {
     errors.push({
       field: "tags",
-      message: 'Must be a YAML list: [tag1, tag2]',
+      message: "Must be a YAML list: [tag1, tag2]",
       severity: "error",
     });
   }

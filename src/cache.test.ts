@@ -11,12 +11,33 @@ import type { IsHistorySettings, ContentItem, ValidationResult } from "./types";
 // ─── Mock helpers ───
 
 const defaultSettings: IsHistorySettings = {
-  _version: 7,
+  _version: 8,
   archivePath: "src/content/blog",
   vaultPath: "src/content/vault",
   cardsPerPage: 40,
   showRibbonIcon: true,
   defaultSeries: "minds-and-machines",
+  tracks: { A: { name: "Articles", emoji: "\u{1F4F0}", color: "#7c3aed" }, P: { name: "Profiles", emoji: "\u{1F9E0}", color: "#3b82f6" }, E: { name: "Events", emoji: "\u26A1", color: "#f59e0b" } },
+  statuses: ["published", "upcoming", "planned"],
+  minTitleLength: 5,
+  maxTitleLength: 120,
+  minDescriptionLength: 15,
+  maxDescriptionLength: 160,
+  requiredArchiveFields: ["title", "date", "description"],
+  imagePrefix: "/",
+  descriptionTruncation: 120,
+  figuresTruncation: 60,
+  maxTagsPerCard: 4,
+  maxErrorsPerCard: 3,
+  maxMetaTags: 30,
+  newPostSlug: "{{seriesOrder}}-untitled-post",
+  newPostTitle: "Untitled {{trackName}} Post",
+  newPostImage: "/images/{{seriesOrderLower}}-hero.jpg",
+  newPostStatus: "planned",
+  newPostBody: "Start writing here...\n",
+  preflightDraft: false,
+  preflightStatus: "published",
+  preflightAutoDate: true,
 };
 
 function makeItem(overrides: Partial<ContentItem> & { path: string }): ContentItem {

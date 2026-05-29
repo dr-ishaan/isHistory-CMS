@@ -2,11 +2,13 @@
  * isHistory CMS Plugin — Type Definitions
  *
  * Central type declarations shared across all modules.
+ * v1.5.0: Fully dynamic tracks, statuses, validation thresholds,
+ * display limits, template engine, and pre-flight configuration.
  */
 
 import { TFile } from "obsidian";
 
-// ─── Track System ───
+// ─── Track System (now fully dynamic) ───
 
 export interface TrackInfo {
   name: string;
@@ -14,16 +16,19 @@ export interface TrackInfo {
   color: string;
 }
 
-export type TrackCode = "A" | "P" | "E";
+/** Track codes are now arbitrary strings, validated against settings.tracks keys */
+export type TrackCode = string;
 
-export const TRACKS: Record<TrackCode, TrackInfo> = {
-  A: { name: "Articles", emoji: "📰", color: "#7c3aed" },
-  P: { name: "Profiles", emoji: "🧠", color: "#3b82f6" },
-  E: { name: "Events", emoji: "⚡", color: "#f59e0b" },
+/** Default track definitions — used as initial settings value */
+export const DEFAULT_TRACKS: Record<string, TrackInfo> = {
+  A: { name: "Articles", emoji: "\u{1F4F0}", color: "#7c3aed" },
+  P: { name: "Profiles", emoji: "\u{1F9E0}", color: "#3b82f6" },
+  E: { name: "Events", emoji: "\u26A1", color: "#f59e0b" },
 };
 
-export const STATUSES = ["published", "upcoming", "planned"] as const;
-export type Status = (typeof STATUSES)[number];
+/** Default status values — used as initial settings value */
+export const DEFAULT_STATUSES = ["published", "upcoming", "planned"] as const;
+export type Status = string;
 
 // ─── Validation ───
 
@@ -41,6 +46,47 @@ export interface ValidationResult {
   status: ValidationStatus;
   label: string;
   errors: ValidationError[];
+}
+
+/**
+ * Configuration passed to validation functions.
+ * Extracted from settings so validators don't depend on the full settings object.
+ */
+export interface ValidationConfig {
+  tracks: Record<string, TrackInfo>;
+  statuses: string[];
+  minTitleLength: number;
+  maxTitleLength: number;
+  minDescriptionLength: number;
+  maxDescriptionLength: number;
+  requiredArchiveFields: string[];
+  imagePrefix: string;
+}
+
+/** Default validation config for tests and fallbacks */
+export const DEFAULT_VALIDATION_CONFIG: ValidationConfig = {
+  tracks: DEFAULT_TRACKS,
+  statuses: [...DEFAULT_STATUSES],
+  minTitleLength: 5,
+  maxTitleLength: 120,
+  minDescriptionLength: 15,
+  maxDescriptionLength: 160,
+  requiredArchiveFields: ["title", "date", "description"],
+  imagePrefix: "/",
+};
+
+/** Extract ValidationConfig from full settings */
+export function getValidationConfig(settings: IsHistorySettings): ValidationConfig {
+  return {
+    tracks: settings.tracks,
+    statuses: settings.statuses,
+    minTitleLength: settings.minTitleLength,
+    maxTitleLength: settings.maxTitleLength,
+    minDescriptionLength: settings.minDescriptionLength,
+    maxDescriptionLength: settings.maxDescriptionLength,
+    requiredArchiveFields: settings.requiredArchiveFields,
+    imagePrefix: settings.imagePrefix,
+  };
 }
 
 // ─── Content Items ───
@@ -67,7 +113,6 @@ export interface ContentItem {
   image: string;
   tags: string[];
   aliases: string[];
-  // Vault-specific fields (undefined for archive items)
   publish: boolean | undefined;
   order: number | undefined;
   validation: ValidationResult;
@@ -86,10 +131,7 @@ export interface CacheStats {
   ready: number;
   errors: number;
   warnings: number;
-  trackA: number;
-  trackP: number;
-  trackE: number;
-  trackNone: number;
+  trackCounts: Record<string, number>;
   uniqueTags: string[];
   allEras: string[];
   allSeries: string[];
@@ -97,15 +139,48 @@ export interface CacheStats {
 
 // ─── Settings ───
 
-export const SETTINGS_VERSION = 7;
+export const SETTINGS_VERSION = 8;
 
 export interface IsHistorySettings {
   _version: number;
+
+  // ─── Content Paths ───
   archivePath: string;
   vaultPath: string;
+
+  // ─── Tracks & Statuses (fully dynamic) ───
+  tracks: Record<string, TrackInfo>;
+  statuses: string[];
+
+  // ─── Validation ───
+  minTitleLength: number;
+  maxTitleLength: number;
+  minDescriptionLength: number;
+  maxDescriptionLength: number;
+  requiredArchiveFields: string[];
+  imagePrefix: string;
+
+  // ─── Display ───
   cardsPerPage: number;
   showRibbonIcon: boolean;
+  descriptionTruncation: number;
+  figuresTruncation: number;
+  maxTagsPerCard: number;
+  maxErrorsPerCard: number;
+  maxMetaTags: number;
+
+  // ─── New Post Template ───
   defaultSeries: string;
+  newPostSlug: string;
+  newPostTitle: string;
+  newPostImage: string;
+  newPostStatus: string;
+  newPostBody: string;
+
+  // ─── Pre-flight ───
+  preflightDraft: boolean;
+  preflightStatus: string;
+  preflightAutoDate: boolean;
 }
 
 export const DEFAULT_SETTINGS: IsHistorySettings = {
@@ -115,15 +190,40 @@ export const DEFAULT_SETTINGS: IsHistorySettings = {
   cardsPerPage: 40,
   showRibbonIcon: true,
   defaultSeries: "minds-and-machines",
+
+  // Dynamic tracks & statuses
+  tracks: { ...DEFAULT_TRACKS },
+  statuses: [...DEFAULT_STATUSES],
+
+  // Validation thresholds
+  minTitleLength: 5,
+  maxTitleLength: 120,
+  minDescriptionLength: 15,
+  maxDescriptionLength: 160,
+  requiredArchiveFields: ["title", "date", "description"],
+  imagePrefix: "/",
+
+  // Display limits
+  descriptionTruncation: 120,
+  figuresTruncation: 60,
+  maxTagsPerCard: 4,
+  maxErrorsPerCard: 3,
+  maxMetaTags: 30,
+
+  // New post template
+  newPostSlug: "{{seriesOrder}}-untitled-post",
+  newPostTitle: "Untitled {{trackName}} Post",
+  newPostImage: "/images/{{seriesOrderLower}}-hero.jpg",
+  newPostStatus: "planned",
+  newPostBody: "Start writing here...\n",
+
+  // Pre-flight
+  preflightDraft: false,
+  preflightStatus: "published",
+  preflightAutoDate: true,
 };
 
 // ─── Frontmatter Schemas ───
-
-export const ARCHIVE_REQUIRED: (keyof ArchiveFrontmatter)[] = [
-  "title",
-  "date",
-  "description",
-];
 
 export interface ArchiveFrontmatter {
   title?: string;
@@ -155,9 +255,48 @@ export interface VaultFrontmatter {
   relatedChapters?: string;
 }
 
+// ─── Regex Builders (dynamic, derived from track codes) ───
+
+/** Build seriesOrder regex from current track codes, e.g. /^([APE])(\d+)$/ */
+export function buildSeriesOrderRegex(tracks: Record<string, TrackInfo>): RegExp {
+  const codes = Object.keys(tracks).join("");
+  return new RegExp(`^([${codes}])(\\d+)$`);
+}
+
+/** Build connects reference regex from current track codes, e.g. /^[APE]\d+$/ */
+export function buildConnectsRefRegex(tracks: Record<string, TrackInfo>): RegExp {
+  const codes = Object.keys(tracks).join("");
+  return new RegExp(`^[${codes}]\\d+$`);
+}
+
+// ─── Template Engine ───
+
+/** Substitute {{variable}} placeholders in a template string */
+export function substituteVars(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => vars[key] ?? `{{${key}}}`);
+}
+
+/** Available template variables for the new-post template, with descriptions */
+export const TEMPLATE_VARIABLES: { name: string; description: string }[] = [
+  { name: "seriesOrder", description: "e.g. A1, P3, E14" },
+  { name: "seriesOrderLower", description: "e.g. a1, p3, e14" },
+  { name: "track", description: "e.g. A, P, E" },
+  { name: "trackName", description: "e.g. Articles, Profiles, Events" },
+  { name: "date", description: "e.g. 2024-01-15" },
+  { name: "series", description: "e.g. minds-and-machines" },
+];
+
 // ─── Utility ───
 
 /** Normalize a path setting: trim whitespace and remove trailing slashes. */
 export function normalizePathSetting(path: string): string {
   return path.trim().replace(/\/+$/, "");
+}
+
+/** Convert hex color to rgba string */
+export function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }

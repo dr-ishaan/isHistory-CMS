@@ -2,7 +2,9 @@
  * isHistory CMS Plugin — Main Entry Point
  *
  * Orchestrates all plugin components: cache, views, commands,
- * settings, and shared operations like preflight and new-post.
+ * settings, and shared operations.
+ * v1.5.0: Fully dynamic tracks, template engine, configurable
+ * pre-flight, and runtime CSS injection for track colors.
  */
 
 import { Plugin, Notice, Modal, type TFile } from "obsidian";
@@ -10,8 +12,12 @@ import {
   type IsHistorySettings,
   type TrackCode,
   type ValidationResult,
+  type TrackInfo,
   DEFAULT_SETTINGS,
   normalizePathSetting,
+  substituteVars,
+  getValidationConfig,
+  hexToRgba,
 } from "./types";
 import { ContentCache } from "./cache";
 import { validateArchive, validateVault, getStatus } from "./validator";
@@ -24,12 +30,12 @@ import {
   IsHistorySidebarView,
   VIEW_TYPE_SIDEBAR,
 } from "./sidebar";
-import { TRACKS } from "./types";
 
 export default class IsHistoryPlugin extends Plugin {
   settings!: IsHistorySettings;
   cache!: ContentCache;
   private _ribbonIcon: HTMLElement | null = null;
+  private _dynamicStyleEl: HTMLElement | null = null;
 
   async onload() {
     try {
@@ -39,6 +45,9 @@ export default class IsHistoryPlugin extends Plugin {
       // Register views
       this.registerView(VIEW_TYPE_DASHBOARD, (leaf) => new IsHistoryDashboardView(leaf, this));
       this.registerView(VIEW_TYPE_SIDEBAR, (leaf) => new IsHistorySidebarView(leaf, this));
+
+      // Inject dynamic CSS for track colors
+      this._injectDynamicStyles();
 
       // Ribbon icon
       if (this.settings.showRibbonIcon) {
@@ -68,21 +77,10 @@ export default class IsHistoryPlugin extends Plugin {
         name: "Pre-flight current draft",
         callback: () => { void this.publishCurrent(); },
       });
-      this.addCommand({
-        id: "new-article",
-        name: "New article (A-track)",
-        callback: () => { void this.newPost("A"); },
-      });
-      this.addCommand({
-        id: "new-profile",
-        name: "New profile (P-track)",
-        callback: () => { void this.newPost("P"); },
-      });
-      this.addCommand({
-        id: "new-event",
-        name: "New event (E-track)",
-        callback: () => { void this.newPost("E"); },
-      });
+
+      // Dynamic track commands — one per track
+      this._registerTrackCommands();
+
       this.addCommand({
         id: "bulk-validate",
         name: "Validate all content",
@@ -106,9 +104,66 @@ export default class IsHistoryPlugin extends Plugin {
     try {
       this.app.workspace.detachLeavesOfType(VIEW_TYPE_DASHBOARD);
       this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
+      // Clean up injected styles
+      this._dynamicStyleEl?.remove();
+      this._dynamicStyleEl = null;
     } catch (e) {
       console.error("isHistory CMS: onunload error", e);
     }
+  }
+
+  // ─── Dynamic Track Commands ───
+
+  private _registerTrackCommands(): void {
+    for (const [code, info] of Object.entries(this.settings.tracks)) {
+      this.addCommand({
+        id: `new-${code.toLowerCase()}-track`,
+        name: `New ${info.name} (${code}-track)`,
+        callback: () => { void this.newPost(code); },
+      });
+    }
+  }
+
+  // ─── Dynamic CSS Injection ───
+
+  /** Inject CSS variables and per-track styles from settings */
+  _injectDynamicStyles(): void {
+    let el = document.getElementById("ishistory-dynamic-styles") as HTMLElement | null;
+    if (!el) {
+      el = document.createElement("style");
+      el.id = "ishistory-dynamic-styles";
+      document.head.appendChild(el);
+    }
+    this._dynamicStyleEl = el;
+    this._updateDynamicStyles();
+  }
+
+  /** Update the injected CSS — call when tracks change */
+  _updateDynamicStyles(): void {
+    if (!this._dynamicStyleEl) return;
+    const rules: string[] = [];
+
+    // CSS custom properties for track colors
+    rules.push(":root {");
+    for (const [code, info] of Object.entries(this.settings.tracks)) {
+      rules.push(`--ish-track-${code.toLowerCase()}: ${info.color};`);
+    }
+    rules.push("}");
+
+    // Per-track card code styles
+    for (const [code, info] of Object.entries(this.settings.tracks)) {
+      const lc = code.toLowerCase();
+      rules.push(`.cms-card-code-${lc} { background: ${hexToRgba(info.color, 0.15)}; color: ${info.color}; }`);
+      rules.push(`.cms-card.cms-card-track-${code} { border-left-color: ${info.color}; }`);
+      rules.push(`.cms-stat-track-${lc} .cms-stat-value { color: ${info.color}; }`);
+    }
+
+    // Track tag styles (use primary track color with low opacity)
+    const primaryColor = Object.values(this.settings.tracks)[0]?.color || "#7c3aed";
+    rules.push(`.cms-card-tag { background: ${hexToRgba(primaryColor, 0.1)}; color: var(--ish-track-a, ${primaryColor}); }`);
+    rules.push(`.cms-tag-chip { background: ${hexToRgba(primaryColor, 0.08)}; color: var(--ish-track-a, ${primaryColor}); }`);
+
+    this._dynamicStyleEl.textContent = rules.join("\n");
   }
 
   // ─── Settings ───
@@ -119,10 +174,8 @@ export default class IsHistoryPlugin extends Plugin {
       const migrated = migrateSettings(loaded || {});
       this.settings = Object.assign({}, DEFAULT_SETTINGS, migrated) as IsHistorySettings;
       this.settings._version = DEFAULT_SETTINGS._version;
-      // Normalize paths on load
       this.settings.archivePath = normalizePathSetting(this.settings.archivePath);
       this.settings.vaultPath = normalizePathSetting(this.settings.vaultPath);
-      // Only save if migration changed something
       if (loaded && (loaded._version || 0) < DEFAULT_SETTINGS._version) {
         await this.saveData(this.settings);
       }
@@ -211,13 +264,14 @@ export default class IsHistoryPlugin extends Plugin {
     try {
       const cache = this.app.metadataCache.getFileCache(file);
       const fm = cache?.frontmatter;
+      const config = getValidationConfig(this.settings);
       const isArchive = file.path.startsWith(normalizePathSetting(this.settings.archivePath));
       const isVault = file.path.startsWith(normalizePathSetting(this.settings.vaultPath));
 
       if (isArchive) {
-        return getStatus(validateArchive(fm));
+        return getStatus(validateArchive(fm, config));
       } else if (isVault) {
-        return getStatus(validateVault(fm));
+        return getStatus(validateVault(fm, config));
       }
       return { status: "ready", label: "N/A", errors: [] };
     } catch {
@@ -249,15 +303,15 @@ export default class IsHistoryPlugin extends Plugin {
     }
   }
 
-  // ─── Shared Pre-flight ───
+  // ─── Shared Pre-flight (configurable) ───
 
   async preflightFile(file: TFile): Promise<void> {
     if (!file) return;
     try {
       await this.app.fileManager.processFrontMatter(file, (fm) => {
-        fm.draft = false;
-        fm.status = "published";
-        if (!fm.date) {
+        fm.draft = this.settings.preflightDraft;
+        fm.status = this.settings.preflightStatus;
+        if (this.settings.preflightAutoDate && !fm.date) {
           fm.date = new Date().toISOString().split("T")[0];
         }
       });
@@ -280,64 +334,86 @@ export default class IsHistoryPlugin extends Plugin {
     }
   }
 
-  // ─── New Post ───
+  // ─── New Post (template engine) ───
 
   async newPost(track: TrackCode) {
     try {
-      const info = TRACKS[track];
+      const info: TrackInfo | undefined = this.settings.tracks[track];
       if (!info) {
         new Notice(`Unknown track: ${track}`);
         return;
       }
 
-      // Find the next available seriesOrder number
+      // Template variables
+      const vars: Record<string, string> = {};
+
+      // Find next seriesOrder number
       const existingOrders = this.cache
-        .getSortedItems("archive")
+        .getSortedItems("archive", this.settings.tracks)
         .filter((i) => i.track === track && i.seriesOrder)
         .map((i) => {
-          const m = i.seriesOrder.match(/^[APE](\d+)$/);
+          const m = i.seriesOrder.match(/^[A-Za-z](\d+)$/);
           return m ? parseInt(m[1], 10) : 0;
         });
       const nextNum = existingOrders.length > 0 ? Math.max(...existingOrders) + 1 : 1;
       const seriesOrder = `${track}${nextNum}`;
 
-      let slug = `${seriesOrder}-untitled-post`;
+      vars.seriesOrder = seriesOrder;
+      vars.seriesOrderLower = seriesOrder.toLowerCase();
+      vars.track = track;
+      vars.trackName = info.name;
+      vars.date = new Date().toISOString().split("T")[0];
+      vars.series = this.settings.defaultSeries || "";
+
+      // Build slug from template
+      const slug = substituteVars(this.settings.newPostSlug, vars);
       let path = `${normalizePathSetting(this.settings.archivePath)}/${slug}.md`;
 
       // Avoid file path collision
       let suffix = 0;
       while (this.app.vault.getAbstractFileByPath(path)) {
         suffix++;
-        slug = `${seriesOrder}-untitled-post-${suffix}`;
-        path = `${normalizePathSetting(this.settings.archivePath)}/${slug}.md`;
+        vars.seriesOrder = `${seriesOrder}-${suffix}`;
+        vars.seriesOrderLower = `${seriesOrder.toLowerCase()}-${suffix}`;
+        const collSlug = substituteVars(this.settings.newPostSlug, vars);
+        path = `${normalizePathSetting(this.settings.archivePath)}/${collSlug}.md`;
       }
 
+      // Reset vars for template
+      vars.seriesOrder = suffix > 0 ? `${seriesOrder}-${suffix}` : seriesOrder;
+      vars.seriesOrderLower = vars.seriesOrder.toLowerCase();
+
+      // Build content from template settings
+      const title = substituteVars(this.settings.newPostTitle, vars);
+      const image = substituteVars(this.settings.newPostImage, vars);
+      const status = this.settings.newPostStatus;
+      const body = substituteVars(this.settings.newPostBody, vars);
       const series = this.settings.defaultSeries || "";
+
       const content = `---
-title: "Untitled ${info.name} Post"
-date: ${new Date().toISOString().split("T")[0]}
+title: "${title}"
+date: ${vars.date}
 description: ""
 draft: true
 tags: []
-image: "/images/${seriesOrder.toLowerCase()}-hero.jpg"
+image: "${image}"
 series: "${series}"
-seriesOrder: "${seriesOrder}"
+seriesOrder: "${vars.seriesOrder}"
 track: "${track}"
-status: "planned"
+status: "${status}"
 part: ""
 figures: ""
 connects: ""
 era: ""
-aliases: ["${seriesOrder}"]
+aliases: ["${vars.seriesOrder}"]
 ---
 
-Start writing here...
-`;
+${body}`;
 
       const createdFile = await this.app.vault.create(path, content);
       const leaf = this.app.workspace.getLeaf(false);
       await leaf.openFile(createdFile);
-      new Notice(`Created ${seriesOrder} — fill in the frontmatter!`);
+      new Notice(`Created ${vars.seriesOrder} — fill in the frontmatter!`);
     } catch (e) {
       new Notice(`Failed to create: ${(e as Error).message}`);
     }
@@ -361,7 +437,7 @@ Start writing here...
   async bulkPreFlight() {
     try {
       this.cache.scanAll(this.app, this.settings);
-      const drafts = this.cache.getSortedItems("archive").filter((i) => i.draft);
+      const drafts = this.cache.getSortedItems("archive", this.settings.tracks).filter((i) => i.draft);
       if (drafts.length === 0) {
         new Notice("No drafts to pre-flight.");
         return;
@@ -372,7 +448,7 @@ Start writing here...
         modal.titleEl.setText(`Pre-flight ${drafts.length} draft(s)?`);
         const body = modal.contentEl.createEl("div");
         body.createEl("p", {
-          text: `This will set ${drafts.length} draft(s) to draft:false, status:"published". Continue?`,
+          text: `This will set ${drafts.length} draft(s) to draft:${this.settings.preflightDraft}, status:"${this.settings.preflightStatus}". Continue?`,
         });
         const btnRow = body.createEl("div", { cls: "cms-modal-btn-row" });
         btnRow

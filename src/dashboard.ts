@@ -2,15 +2,14 @@
  * isHistory CMS Plugin — Dashboard View
  *
  * Full content management UI with differential rendering.
- * Only changed cards are re-rendered instead of full DOM rebuild.
- * Supports multi-criterion AND filtering.
+ * v1.5.0: All display limits and track/status references
+ * are derived from settings, not hardcoded.
  */
 
 import { ItemView, type WorkspaceLeaf, Notice, Modal, TFile } from "obsidian";
 import {
   type ContentItem,
   type TrackCode,
-  TRACKS,
   DEFAULT_SETTINGS,
 } from "./types";
 import IsHistoryPlugin from "./main";
@@ -31,11 +30,8 @@ export class IsHistoryDashboardView extends ItemView {
   private _ready = false;
   private _pendingPaths: Set<string> = new Set();
   private _updateTimer: ReturnType<typeof setTimeout> | null = null;
-  // Track previous item states for differential comparison
   private _itemSnapshots: Map<string, string> = new Map();
-  // Guard against re-entrant rendering
   private _rendering = false;
-  // Debounced render request
   private _renderTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: IsHistoryPlugin) {
@@ -53,8 +49,7 @@ export class IsHistoryDashboardView extends ItemView {
 
     this.registerEvent(
       this.app.metadataCache.on("changed", (file) => {
-        if (!this.app.workspace.layoutReady) return;
-        if (this._destroyed) return;
+        if (!this.app.workspace.layoutReady || this._destroyed) return;
         if (!this.plugin.cache.isInCollection(file.path, this.plugin.settings)) return;
         this._queuePath(file.path);
       })
@@ -62,8 +57,7 @@ export class IsHistoryDashboardView extends ItemView {
 
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (!this.app.workspace.layoutReady) return;
-        if (this._destroyed) return;
+        if (!this.app.workspace.layoutReady || this._destroyed) return;
         if (!this.plugin.cache.isInCollection(file.path, this.plugin.settings) || !(file instanceof TFile)) return;
         this._queuePath(file.path);
       })
@@ -71,8 +65,7 @@ export class IsHistoryDashboardView extends ItemView {
 
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (!this.app.workspace.layoutReady) return;
-        if (this._destroyed) return;
+        if (!this.app.workspace.layoutReady || this._destroyed) return;
         if (!this.plugin.cache.isInCollection(file.path, this.plugin.settings)) return;
         this.plugin.cache.removeFile(file.path);
         this._queuePath(file.path);
@@ -81,8 +74,7 @@ export class IsHistoryDashboardView extends ItemView {
 
     this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
-        if (!this.app.workspace.layoutReady) return;
-        if (this._destroyed) return;
+        if (!this.app.workspace.layoutReady || this._destroyed) return;
         if (this.plugin.cache.isInCollection(oldPath, this.plugin.settings)) {
           this.plugin.cache.removeFile(oldPath);
           this._queuePath(oldPath);
@@ -110,8 +102,8 @@ export class IsHistoryDashboardView extends ItemView {
       const c = this.contentEl;
       c.empty();
       c.addClass("ishistory-dashboard");
-      const loadingEl = c.createEl("div", { cls: "cms-loading-state" });
-      loadingEl.createEl("div", { text: "Loading isHistory CMS...", cls: "cms-empty-title" });
+      c.createEl("div", { cls: "cms-loading-state" })
+        .createEl("div", { text: "Loading isHistory CMS...", cls: "cms-empty-title" });
     } catch { /* ignore */ }
   }
 
@@ -155,10 +147,6 @@ export class IsHistoryDashboardView extends ItemView {
     }
   }
 
-  /**
-   * Request a debounced full render. Use this instead of calling renderDashboard()
-   * directly from external code (e.g. rescanCache) to avoid stacking renders.
-   */
   requestRender(): void {
     if (this._destroyed) return;
     if (this._renderTimer) clearTimeout(this._renderTimer);
@@ -167,8 +155,6 @@ export class IsHistoryDashboardView extends ItemView {
       this.renderDashboard();
     }, 100);
   }
-
-  // ─── Snapshot-based differential comparison ───
 
   private _itemFingerprint(item: ContentItem): string {
     return JSON.stringify({
@@ -182,10 +168,9 @@ export class IsHistoryDashboardView extends ItemView {
     });
   }
 
-  // ─── Full Dashboard Render (initial load) ───
+  // ─── Full Dashboard Render ───
 
   renderDashboard(): void {
-    // Guard against re-entrant rendering
     if (this._rendering || this._destroyed) return;
     this._rendering = true;
 
@@ -197,6 +182,7 @@ export class IsHistoryDashboardView extends ItemView {
       this._itemSnapshots.clear();
 
       const cache = this.plugin.cache;
+      const settings = this.plugin.settings;
 
       // Header
       const header = container.createEl("div", { cls: "cms-dash-header" });
@@ -209,30 +195,19 @@ export class IsHistoryDashboardView extends ItemView {
 
       // Toolbar
       const toolbar = container.createEl("div", { cls: "cms-toolbar" });
-
       const searchWrap = toolbar.createEl("div", { cls: "cms-search-wrap" });
       const searchInput = searchWrap.createEl("input", {
-        type: "text",
-        placeholder: "Search posts, figures, tags...",
-        cls: "cms-search-input",
-        value: this.searchQuery,
+        type: "text", placeholder: "Search posts, figures, tags...",
+        cls: "cms-search-input", value: this.searchQuery,
       });
       searchInput.addEventListener("input", () => {
         this.searchQuery = searchInput.value;
         this.applyFilters();
       });
 
+      // Dynamic filter buttons from settings
       const filterGroup = toolbar.createEl("div", { cls: "cms-filter-group" });
-      const filters = [
-        { key: "all", label: "All" },
-        { key: "archive", label: "Archive" },
-        { key: "track-A", label: "A Articles" },
-        { key: "track-P", label: "P Profiles" },
-        { key: "track-E", label: "E Events" },
-        { key: "vault", label: "Vault" },
-        { key: "drafts", label: "Drafts" },
-        { key: "errors", label: "Errors" },
-      ];
+      const filters = this._buildFilterList();
       for (const f of filters) {
         const btn = filterGroup.createEl("button", {
           text: f.label,
@@ -244,23 +219,15 @@ export class IsHistoryDashboardView extends ItemView {
             this.activeFilters.add("all");
           } else {
             this.activeFilters.delete("all");
-            if (this.activeFilters.has(f.key)) {
-              this.activeFilters.delete(f.key);
-            } else {
-              this.activeFilters.add(f.key);
-            }
-            if (this.activeFilters.size === 0) {
-              this.activeFilters.add("all");
-            }
+            if (this.activeFilters.has(f.key)) { this.activeFilters.delete(f.key); } else { this.activeFilters.add(f.key); }
+            if (this.activeFilters.size === 0) this.activeFilters.add("all");
           }
           filterGroup.querySelectorAll(".cms-filter-btn").forEach((b) => {
             (b as HTMLElement).removeClass("cms-filter-btn-active");
           });
           for (const key of this.activeFilters) {
             const idx = filters.findIndex((fi) => fi.key === key);
-            if (idx >= 0) {
-              filterGroup.children[idx]?.addClass("cms-filter-btn-active");
-            }
+            if (idx >= 0) filterGroup.children[idx]?.addClass("cms-filter-btn-active");
           }
           this.applyFilters();
         });
@@ -273,15 +240,13 @@ export class IsHistoryDashboardView extends ItemView {
       actionsGroup
         .createEl("button", { text: "Refresh", cls: "cms-btn cms-btn-secondary" })
         .addEventListener("click", () => {
-          try {
-            this.plugin.cache.scanAll(this.app, this.plugin.settings);
-            this.renderDashboard();
-          } catch (e) { console.error(e); }
+          try { this.plugin.cache.scanAll(this.app, this.plugin.settings); this.renderDashboard(); }
+          catch (e) { console.error(e); }
         });
 
       // Grid
       this._gridEl = container.createEl("div", { cls: "cms-content-grid" });
-      const items = cache.getSortedItems();
+      const items = cache.getSortedItems(undefined, settings.tracks);
       if (items.length === 0) {
         const emptyEl = this._gridEl.createEl("div", { cls: "cms-empty-state" });
         emptyEl.createEl("div", { text: "No content found", cls: "cms-empty-title" });
@@ -318,76 +283,79 @@ export class IsHistoryDashboardView extends ItemView {
     }
   }
 
-  // ─── DIFFERENTIAL UPDATE ───
+  /** Build filter list dynamically from tracks and statuses */
+  private _buildFilterList(): { key: string; label: string }[] {
+    const settings = this.plugin.settings;
+    const filters: { key: string; label: string }[] = [
+      { key: "all", label: "All" },
+      { key: "archive", label: "Archive" },
+    ];
+    for (const [code, info] of Object.entries(settings.tracks)) {
+      filters.push({ key: `track-${code}`, label: `${code} ${info.name}` });
+    }
+    filters.push({ key: "vault", label: "Vault" });
+    filters.push({ key: "drafts", label: "Drafts" });
+    filters.push({ key: "errors", label: "Errors" });
+    return filters;
+  }
+
+  // ─── Differential Update ───
 
   private _differentialUpdate(): void {
     if (!this._gridEl || this._destroyed) return;
-
     const cache = this.plugin.cache;
     const currentItems = new Map<string, ContentItem>();
-    for (const item of cache.getSortedItems()) {
+    for (const item of cache.getSortedItems(undefined, this.plugin.settings.tracks)) {
       currentItems.set(item.path, item);
     }
 
-    // 1. Remove cards for deleted items
     for (const [path, cardEl] of this._cardElements) {
-      if (!currentItems.has(path)) {
-        cardEl.remove();
-        this._cardElements.delete(path);
-        this._itemSnapshots.delete(path);
-      }
+      if (!currentItems.has(path)) { cardEl.remove(); this._cardElements.delete(path); this._itemSnapshots.delete(path); }
     }
 
-    // 2. Add or update cards for current items
     for (const item of currentItems.values()) {
       const existingCard = this._cardElements.get(item.path);
       const prevSnapshot = this._itemSnapshots.get(item.path);
       const newSnapshot = this._itemFingerprint(item);
-
       if (!existingCard) {
-        // New item — create card and insert in sorted order
         this._createCardElement(item);
         this._itemSnapshots.set(item.path, newSnapshot);
       } else if (prevSnapshot !== newSnapshot) {
-        // Changed item — replace the card in-place
         const parent = existingCard.parentElement;
         const nextSibling = existingCard.nextSibling;
         existingCard.remove();
         const newCard = this._buildCardDOM(item);
-        if (parent) {
-          parent.insertBefore(newCard, nextSibling);
-        }
+        if (parent) parent.insertBefore(newCard, nextSibling);
         this._cardElements.set(item.path, newCard);
         this._itemSnapshots.set(item.path, newSnapshot);
       }
     }
 
-    // 3. Update stats
-    if (this._statsEl) {
-      this._renderStats();
-    }
-
-    // 4. Re-apply filters
+    if (this._statsEl) this._renderStats();
     this.applyFilters();
   }
 
-  // ─── Stats Rendering ───
+  // ─── Stats Rendering (dynamic tracks) ───
 
   private _renderStats(): void {
     if (!this._statsEl) return;
     try {
       this._statsEl.empty();
-      const s = this.plugin.cache.getStats();
+      const settings = this.plugin.settings;
+      const s = this.plugin.cache.getStats(settings);
       const cards = [
         { label: "Archive", value: s.archiveTotal, cls: "" },
         { label: "Vault", value: s.vaultTotal, cls: "cms-stat-vault" },
-        { label: "A Articles", value: s.trackA, cls: "cms-stat-track-a" },
-        { label: "P Profiles", value: s.trackP, cls: "cms-stat-track-p" },
-        { label: "E Events", value: s.trackE, cls: "cms-stat-track-e" },
+      ];
+      // Dynamic track stats
+      for (const [code, info] of Object.entries(settings.tracks)) {
+        cards.push({ label: `${code} ${info.name}`, value: s.trackCounts[code] || 0, cls: `cms-stat-track-${code.toLowerCase()}` });
+      }
+      cards.push(
         { label: "Drafts", value: s.drafts, cls: "cms-stat-warning" },
         { label: "Errors", value: s.errors, cls: "cms-stat-error" },
         { label: "Ready", value: s.ready, cls: "cms-stat-success" },
-      ];
+      );
       for (const c of cards) {
         const el = this._statsEl.createEl("div", { cls: `cms-stat-card ${c.cls}` });
         el.createEl("div", { text: String(c.value), cls: "cms-stat-value" });
@@ -396,12 +364,10 @@ export class IsHistoryDashboardView extends ItemView {
     } catch (e) { console.error(e); }
   }
 
-  // ─── Card DOM Building ───
+  // ─── Card DOM Building (settings-driven display limits) ───
 
   private _buildCardDOM(item: ContentItem): HTMLElement {
-    // Build card directly on a detached element that uses Obsidian's
-    // patched createEl. We create the card div itself as the root,
-    // then append children to it.
+    const settings = this.plugin.settings;
     const card = document.createElement("div");
     card.className = `cms-card cms-card-${item.validation.status} cms-card-${item.collection}${item.track ? " cms-card-track-" + item.track : ""}`;
     card.setAttribute("data-path", item.path);
@@ -417,32 +383,34 @@ export class IsHistoryDashboardView extends ItemView {
     if (item.seriesOrder) {
       titleArea.createEl("span", {
         text: item.seriesOrder,
-        cls: `cms-card-code cms-card-code-${item.track || "X"}`,
+        cls: `cms-card-code cms-card-code-${(item.track || "X").toLowerCase()}`,
       });
     }
     titleArea.createEl("span", { text: item.title, cls: "cms-card-title" });
 
-    // Badges
+    // Badges (dynamic track info from settings)
     const badgeArea = cardHeader.createEl("div", { cls: "cms-card-badges" });
-    if (item.track && TRACKS[item.track as TrackCode]) {
+    if (item.track && settings.tracks[item.track]) {
+      const trackInfo = settings.tracks[item.track];
       badgeArea.createEl("span", {
-        text: `${TRACKS[item.track as TrackCode].emoji} ${TRACKS[item.track as TrackCode].name}`,
+        text: `${trackInfo.emoji} ${trackInfo.name}`,
         cls: "cms-badge cms-badge-track",
       });
     } else if (item.track) {
-      badgeArea.createEl("span", { text: "Custom Track", cls: "cms-badge cms-badge-track" });
+      badgeArea.createEl("span", { text: `${item.track} Track`, cls: "cms-badge cms-badge-track" });
     }
     badgeArea.createEl("span", {
       text: item.validation.label,
       cls: `cms-badge cms-badge-${item.validation.status === "ready" ? "success" : item.validation.status === "error" ? "error" : "warning"}`,
     });
 
-    // Body
+    // Body (configurable truncation limits)
     const cardBody = card.createEl("div", { cls: "cms-card-body" });
 
     if (item.description) {
+      const descLimit = settings.descriptionTruncation || 120;
       cardBody.createEl("div", {
-        text: item.description.length > 120 ? item.description.substring(0, 120) + "..." : item.description,
+        text: item.description.length > descLimit ? item.description.substring(0, descLimit) + "..." : item.description,
         cls: "cms-card-desc",
       });
     }
@@ -455,45 +423,44 @@ export class IsHistoryDashboardView extends ItemView {
     if (item.part) metaRow.createEl("span", { text: item.part, cls: "cms-meta-item" });
 
     if (item.figures) {
+      const figLimit = settings.figuresTruncation || 60;
       const figRow = cardBody.createEl("div", { cls: "cms-card-figures" });
       figRow.createEl("span", { text: "Figures: ", cls: "cms-figures-label" });
       figRow.createEl("span", {
-        text: item.figures.length > 60 ? item.figures.substring(0, 60) + "..." : item.figures,
+        text: item.figures.length > figLimit ? item.figures.substring(0, figLimit) + "..." : item.figures,
         cls: "cms-figures-value",
       });
     }
 
     if (item.tags.length > 0) {
+      const tagLimit = settings.maxTagsPerCard || 4;
       const tagRow = cardBody.createEl("div", { cls: "cms-card-tags" });
-      for (const tag of item.tags.slice(0, 4))
+      for (const tag of item.tags.slice(0, tagLimit))
         tagRow.createEl("span", { text: tag, cls: "cms-card-tag" });
-      if (item.tags.length > 4)
-        tagRow.createEl("span", { text: `+${item.tags.length - 4}`, cls: "cms-card-tag cms-card-tag-more" });
+      if (item.tags.length > tagLimit)
+        tagRow.createEl("span", { text: `+${item.tags.length - tagLimit}`, cls: "cms-card-tag cms-card-tag-more" });
     }
 
     if (item.validation.errors.length > 0) {
+      const errLimit = settings.maxErrorsPerCard || 3;
       const errorList = cardBody.createEl("div", { cls: "cms-card-errors" });
-      for (const err of item.validation.errors.slice(0, 3)) {
+      for (const err of item.validation.errors.slice(0, errLimit)) {
         errorList.createEl("div", {
           text: `${err.field}: ${err.message}`,
           cls: `cms-card-error cms-card-error-${err.severity}`,
         });
       }
-      if (item.validation.errors.length > 3)
-        errorList.createEl("div", { text: `+${item.validation.errors.length - 3} more`, cls: "cms-card-error-more" });
+      if (item.validation.errors.length > errLimit)
+        errorList.createEl("div", { text: `+${item.validation.errors.length - errLimit} more`, cls: "cms-card-error-more" });
     }
 
     // Actions
     const cardActions = card.createEl("div", { cls: "cms-card-actions" });
-    cardActions
-      .createEl("button", { text: "Open", cls: "cms-btn cms-btn-sm" })
+    cardActions.createEl("button", { text: "Open", cls: "cms-btn cms-btn-sm" })
       .addEventListener("click", () => {
-        if (item.file) {
-          void this.app.workspace.getLeaf(false).openFile(item.file);
-        }
+        if (item.file) void this.app.workspace.getLeaf(false).openFile(item.file);
       });
-    cardActions
-      .createEl("button", { text: "Validate", cls: "cms-btn cms-btn-sm cms-btn-secondary" })
+    cardActions.createEl("button", { text: "Validate", cls: "cms-btn cms-btn-sm cms-btn-secondary" })
       .addEventListener("click", () => {
         try {
           const r = this.plugin.validateFile(item.file);
@@ -505,8 +472,7 @@ export class IsHistoryDashboardView extends ItemView {
         } catch (e) { new Notice(`Validation failed: ${(e as Error).message}`); }
       });
     if (item.draft) {
-      cardActions
-        .createEl("button", { text: "Pre-flight", cls: "cms-btn cms-btn-sm cms-btn-primary" })
+      cardActions.createEl("button", { text: "Pre-flight", cls: "cms-btn cms-btn-sm cms-btn-primary" })
         .addEventListener("click", () => { void this.plugin.preflightFile(item.file); });
     }
 
@@ -523,7 +489,7 @@ export class IsHistoryDashboardView extends ItemView {
     } catch (e) { console.error(e); return null; }
   }
 
-  // ─── New Post ───
+  // ─── New Post (dynamic tracks) ───
 
   private async _newPost(): Promise<void> {
     try {
@@ -531,7 +497,7 @@ export class IsHistoryDashboardView extends ItemView {
       trackModal.titleEl.setText("New Post — Select Track");
       const body = trackModal.contentEl.createEl("div", { cls: "cms-new-post-tracks" });
 
-      for (const [code, info] of Object.entries(TRACKS) as [string, typeof TRACKS[TrackCode]][]) {
+      for (const [code, info] of Object.entries(this.plugin.settings.tracks)) {
         const btn = body.createEl("button", {
           text: `${info.emoji} ${info.name} (${code})`,
           cls: "cms-btn cms-btn-track-btn",
@@ -551,7 +517,6 @@ export class IsHistoryDashboardView extends ItemView {
     try {
       const search = this.searchQuery.toLowerCase().trim();
       let visibleCount = 0;
-
       for (const [path, cardEl] of this._cardElements) {
         const item = this.plugin.cache.items.get(path);
         if (!item) { cardEl.style.display = "none"; continue; }
@@ -560,7 +525,6 @@ export class IsHistoryDashboardView extends ItemView {
         if (matches) visibleCount++;
         cardEl.style.display = !matches || beyondPage ? "none" : "";
       }
-
       this._totalVisible = visibleCount;
       if (this._loadMoreEl) {
         this._loadMoreEl.style.display = this._totalVisible > this._visibleLimit ? "" : "none";
@@ -570,56 +534,44 @@ export class IsHistoryDashboardView extends ItemView {
     } catch (e) { console.error(e); }
   }
 
-  // ─── Meta Section (optimized O(n+m)) ───
+  // ─── Meta Section ───
 
   private _renderMetaSection(container: HTMLElement): void {
     if (!container) return;
     try {
       const existing = container.querySelector(".cms-meta-section");
       if (existing) existing.remove();
-
-      const stats = this.plugin.cache.getStats();
+      const settings = this.plugin.settings;
+      const stats = this.plugin.cache.getStats(settings);
       if (stats.uniqueTags.length === 0 && stats.allEras.length === 0) return;
 
-      const items = this.plugin.cache.getSortedItems();
+      const items = this.plugin.cache.getSortedItems(undefined, settings.tracks);
       const section = container.createEl("div", { cls: "cms-meta-section" });
 
-      // Pre-compute era counts for O(n) instead of O(n*m)
       const eraCounts = new Map<string, number>();
       const tagCounts = new Map<string, number>();
       for (const item of items) {
-        if (item.era) {
-          eraCounts.set(item.era, (eraCounts.get(item.era) || 0) + 1);
-        }
-        for (const tag of item.tags) {
-          tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-        }
+        if (item.era) eraCounts.set(item.era, (eraCounts.get(item.era) || 0) + 1);
+        for (const tag of item.tags) tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
       }
 
       if (stats.allEras.length > 0) {
         const block = section.createEl("div", { cls: "cms-meta-block" });
         block.createEl("h4", { text: `Eras (${stats.allEras.length})`, cls: "cms-meta-heading" });
         const list = block.createEl("div", { cls: "cms-tag-list" });
-        for (const era of stats.allEras.sort()) {
-          list.createEl("span", {
-            text: `${era} (${eraCounts.get(era) || 0})`,
-            cls: "cms-tag-chip cms-era-chip",
-          });
-        }
+        for (const era of stats.allEras.sort())
+          list.createEl("span", { text: `${era} (${eraCounts.get(era) || 0})`, cls: "cms-tag-chip cms-era-chip" });
       }
 
       if (stats.uniqueTags.length > 0) {
+        const tagLimit = settings.maxMetaTags || 30;
         const block = section.createEl("div", { cls: "cms-meta-block" });
         block.createEl("h4", { text: `Tags (${stats.uniqueTags.length})`, cls: "cms-meta-heading" });
         const list = block.createEl("div", { cls: "cms-tag-list" });
-        for (const tag of stats.uniqueTags.sort().slice(0, 30)) {
-          list.createEl("span", {
-            text: `${tag} (${tagCounts.get(tag) || 0})`,
-            cls: "cms-tag-chip",
-          });
-        }
-        if (stats.uniqueTags.length > 30)
-          list.createEl("span", { text: `+${stats.uniqueTags.length - 30} more`, cls: "cms-tag-chip" });
+        for (const tag of stats.uniqueTags.sort().slice(0, tagLimit))
+          list.createEl("span", { text: `${tag} (${tagCounts.get(tag) || 0})`, cls: "cms-tag-chip" });
+        if (stats.uniqueTags.length > tagLimit)
+          list.createEl("span", { text: `+${stats.uniqueTags.length - tagLimit} more`, cls: "cms-tag-chip" });
       }
     } catch (e) { console.error(e); }
   }

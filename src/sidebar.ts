@@ -2,7 +2,7 @@
  * isHistory CMS Plugin — Sidebar View
  *
  * Context-aware validation panel for the currently active file.
- * Subscribes to file changes, deletions, and renames.
+ * v1.5.0: Status badges derived from settings.
  */
 
 import { ItemView, type WorkspaceLeaf, Notice } from "obsidian";
@@ -28,7 +28,6 @@ export class IsHistorySidebarView extends ItemView {
   async onOpen() {
     this._destroyed = false;
 
-    // Use "file-open" instead of the non-existent "active-file-change"
     this.registerEvent(
       this.app.workspace.on("file-open" as never, () => {
         if (!this.app.workspace.layoutReady || this._destroyed) return;
@@ -44,7 +43,6 @@ export class IsHistorySidebarView extends ItemView {
       })
     );
 
-    // Handle file deletion — clear sidebar if active file was deleted
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
         if (!this.app.workspace.layoutReady || this._destroyed) return;
@@ -53,7 +51,6 @@ export class IsHistorySidebarView extends ItemView {
       })
     );
 
-    // Handle file rename — refresh if renamed file is active
     this.registerEvent(
       this.app.vault.on("rename", (file) => {
         if (!this.app.workspace.layoutReady || this._destroyed) return;
@@ -115,7 +112,7 @@ export class IsHistorySidebarView extends ItemView {
       if (cached && cached.seriesOrder) {
         fileInfo.createEl("span", {
           text: cached.seriesOrder,
-          cls: `cms-card-code cms-card-code-${cached.track || "X"}`,
+          cls: `cms-card-code cms-card-code-${(cached.track || "X").toLowerCase()}`,
         });
       }
       fileInfo.createEl("span", { text: activeFile.path, cls: "cms-sidebar-file-title" });
