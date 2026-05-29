@@ -2,24 +2,35 @@
  * isHistory CMS Plugin — Dashboard View
  *
  * Full content management UI with differential rendering.
- * v1.5.0: All display limits and track/status references
- * are derived from settings, not hardcoded.
+ * v1.6.0: Sort options dropdown, recently modified filter,
+ * search debounce for better performance with many cards.
  */
 
 import { ItemView, type WorkspaceLeaf, Notice, Modal, TFile } from "obsidian";
 import {
   type ContentItem,
   type TrackCode,
+  type SortMode,
   DEFAULT_SETTINGS,
 } from "./types";
 import IsHistoryPlugin from "./main";
 
 export const VIEW_TYPE_DASHBOARD = "ishistory-dashboard";
 
+const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+  { value: "seriesOrder", label: "Series Order" },
+  { value: "dateNewest", label: "Newest First" },
+  { value: "dateOldest", label: "Oldest First" },
+  { value: "titleAZ", label: "Title A-Z" },
+  { value: "errorsFirst", label: "Errors First" },
+  { value: "draftsFirst", label: "Drafts First" },
+];
+
 export class IsHistoryDashboardView extends ItemView {
   plugin: IsHistoryPlugin;
   activeFilters: Set<string> = new Set(["all"]);
   searchQuery = "";
+  sortMode: SortMode = "seriesOrder";
   private _visibleLimit: number;
   private _cardElements: Map<string, HTMLElement> = new Map();
   private _gridEl: HTMLElement | null = null;
@@ -33,6 +44,8 @@ export class IsHistoryDashboardView extends ItemView {
   private _itemSnapshots: Map<string, string> = new Map();
   private _rendering = false;
   private _renderTimer: ReturnType<typeof setTimeout> | null = null;
+  // Feature 10: Search debounce timer
+  private _searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: IsHistoryPlugin) {
     super(leaf);
@@ -200,9 +213,25 @@ export class IsHistoryDashboardView extends ItemView {
         type: "text", placeholder: "Search posts, figures, tags...",
         cls: "cms-search-input", value: this.searchQuery,
       });
+      searchInput.setAttribute("aria-label", "Search posts, figures, tags");
+
+      // Feature 10: Search debounce (200ms)
       searchInput.addEventListener("input", () => {
         this.searchQuery = searchInput.value;
-        this.applyFilters();
+        if (this._searchTimer) clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => this.applyFilters(), 200);
+      });
+
+      // Feature 7: Sort dropdown
+      const sortSelect = toolbar.createEl("select", { cls: "cms-sort-select" });
+      sortSelect.setAttribute("aria-label", "Sort posts by");
+      for (const opt of SORT_OPTIONS) {
+        const optionEl = sortSelect.createEl("option", { value: opt.value, text: opt.label });
+        if (opt.value === this.sortMode) optionEl.selected = true;
+      }
+      sortSelect.addEventListener("change", () => {
+        this.sortMode = sortSelect.value as SortMode;
+        this.renderDashboard();
       });
 
       // Dynamic filter buttons from settings
@@ -213,6 +242,7 @@ export class IsHistoryDashboardView extends ItemView {
           text: f.label,
           cls: `cms-filter-btn ${this.activeFilters.has(f.key) ? "cms-filter-btn-active" : ""}`,
         });
+        btn.setAttribute("aria-pressed", String(this.activeFilters.has(f.key)));
         btn.addEventListener("click", () => {
           if (f.key === "all") {
             this.activeFilters.clear();
@@ -224,10 +254,14 @@ export class IsHistoryDashboardView extends ItemView {
           }
           filterGroup.querySelectorAll(".cms-filter-btn").forEach((b) => {
             (b as HTMLElement).removeClass("cms-filter-btn-active");
+            b.setAttribute("aria-pressed", "false");
           });
           for (const key of this.activeFilters) {
             const idx = filters.findIndex((fi) => fi.key === key);
-            if (idx >= 0) filterGroup.children[idx]?.addClass("cms-filter-btn-active");
+            if (idx >= 0) {
+              filterGroup.children[idx]?.addClass("cms-filter-btn-active");
+              filterGroup.children[idx]?.setAttribute("aria-pressed", "true");
+            }
           }
           this.applyFilters();
         });
@@ -240,13 +274,13 @@ export class IsHistoryDashboardView extends ItemView {
       actionsGroup
         .createEl("button", { text: "Refresh", cls: "cms-btn cms-btn-secondary" })
         .addEventListener("click", () => {
-          try { this.plugin.cache.scanAll(this.app, this.plugin.settings); this.renderDashboard(); }
+          try { this.plugin.cache.scanAll(this.app, this.plugin.settings); this.renderDashboard(); this.plugin._updateStatusBar(); }
           catch (e) { console.error(e); }
         });
 
       // Grid
       this._gridEl = container.createEl("div", { cls: "cms-content-grid" });
-      const items = cache.getSortedItems(undefined, settings.tracks);
+      const items = cache.getSortedItems(undefined, settings.tracks, this.sortMode);
       if (items.length === 0) {
         const emptyEl = this._gridEl.createEl("div", { cls: "cms-empty-state" });
         emptyEl.createEl("div", { text: "No content found", cls: "cms-empty-title" });
@@ -283,7 +317,7 @@ export class IsHistoryDashboardView extends ItemView {
     }
   }
 
-  /** Build filter list dynamically from tracks and statuses */
+  /** Build filter list dynamically from tracks and statuses, plus "recent" */
   private _buildFilterList(): { key: string; label: string }[] {
     const settings = this.plugin.settings;
     const filters: { key: string; label: string }[] = [
@@ -295,6 +329,8 @@ export class IsHistoryDashboardView extends ItemView {
     }
     filters.push({ key: "vault", label: "Vault" });
     filters.push({ key: "drafts", label: "Drafts" });
+    // Feature 8: Recently modified filter
+    filters.push({ key: "recent", label: "Recent" });
     filters.push({ key: "errors", label: "Errors" });
     return filters;
   }
@@ -305,7 +341,7 @@ export class IsHistoryDashboardView extends ItemView {
     if (!this._gridEl || this._destroyed) return;
     const cache = this.plugin.cache;
     const currentItems = new Map<string, ContentItem>();
-    for (const item of cache.getSortedItems(undefined, this.plugin.settings.tracks)) {
+    for (const item of cache.getSortedItems(undefined, this.plugin.settings.tracks, this.sortMode)) {
       currentItems.set(item.path, item);
     }
 
@@ -347,7 +383,6 @@ export class IsHistoryDashboardView extends ItemView {
         { label: "Archive", value: s.archiveTotal, cls: "" },
         { label: "Vault", value: s.vaultTotal, cls: "cms-stat-vault" },
       ];
-      // Dynamic track stats
       for (const [code, info] of Object.entries(settings.tracks)) {
         cards.push({ label: `${code} ${info.name}`, value: s.trackCounts[code] || 0, cls: `cms-stat-track-${code.toLowerCase()}` });
       }
@@ -388,7 +423,6 @@ export class IsHistoryDashboardView extends ItemView {
     }
     titleArea.createEl("span", { text: item.title, cls: "cms-card-title" });
 
-    // Badges (dynamic track info from settings)
     const badgeArea = cardHeader.createEl("div", { cls: "cms-card-badges" });
     if (item.track && settings.tracks[item.track]) {
       const trackInfo = settings.tracks[item.track];
@@ -404,7 +438,7 @@ export class IsHistoryDashboardView extends ItemView {
       cls: `cms-badge cms-badge-${item.validation.status === "ready" ? "success" : item.validation.status === "error" ? "error" : "warning"}`,
     });
 
-    // Body (configurable truncation limits)
+    // Body
     const cardBody = card.createEl("div", { cls: "cms-card-body" });
 
     if (item.description) {
@@ -456,11 +490,11 @@ export class IsHistoryDashboardView extends ItemView {
 
     // Actions
     const cardActions = card.createEl("div", { cls: "cms-card-actions" });
-    cardActions.createEl("button", { text: "Open", cls: "cms-btn cms-btn-sm" })
+    cardActions.createEl("button", { text: "Open", cls: "cms-btn cms-btn-sm", attr: { "aria-label": `Open ${item.title}` } })
       .addEventListener("click", () => {
         if (item.file) void this.app.workspace.getLeaf(false).openFile(item.file);
       });
-    cardActions.createEl("button", { text: "Validate", cls: "cms-btn cms-btn-sm cms-btn-secondary" })
+    cardActions.createEl("button", { text: "Validate", cls: "cms-btn cms-btn-sm cms-btn-secondary", attr: { "aria-label": `Validate ${item.title}` } })
       .addEventListener("click", () => {
         try {
           const r = this.plugin.validateFile(item.file);
@@ -472,7 +506,7 @@ export class IsHistoryDashboardView extends ItemView {
         } catch (e) { new Notice(`Validation failed: ${(e as Error).message}`); }
       });
     if (item.draft) {
-      cardActions.createEl("button", { text: "Pre-flight", cls: "cms-btn cms-btn-sm cms-btn-primary" })
+      cardActions.createEl("button", { text: "Pre-flight", cls: "cms-btn cms-btn-sm cms-btn-primary", attr: { "aria-label": `Pre-flight ${item.title}` } })
         .addEventListener("click", () => { void this.plugin.preflightFile(item.file); });
     }
 
@@ -545,7 +579,7 @@ export class IsHistoryDashboardView extends ItemView {
       const stats = this.plugin.cache.getStats(settings);
       if (stats.uniqueTags.length === 0 && stats.allEras.length === 0) return;
 
-      const items = this.plugin.cache.getSortedItems(undefined, settings.tracks);
+      const items = this.plugin.cache.getSortedItems(undefined, settings.tracks, this.sortMode);
       const section = container.createEl("div", { cls: "cms-meta-section" });
 
       const eraCounts = new Map<string, number>();
@@ -581,6 +615,7 @@ export class IsHistoryDashboardView extends ItemView {
     this._ready = false;
     if (this._updateTimer) clearTimeout(this._updateTimer);
     if (this._renderTimer) clearTimeout(this._renderTimer);
+    if (this._searchTimer) clearTimeout(this._searchTimer);
     this._cardElements.clear();
     this._pendingPaths.clear();
     this._itemSnapshots.clear();

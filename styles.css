@@ -1,6 +1,7 @@
 /* ═════════════════════════════════════════════════════════════════════════
-   isHistory CMS Plugin v1.5.0 — Complete Styles
+   isHistory CMS Plugin v1.6.0 — Complete Styles
    Track-specific colors are injected at runtime via CSS variables.
+   v1.6.0: Status bar, sort dropdown, settings warnings, pre-flight errors.
    ═════════════════════════════════════════════════════════════════════════ */
 
 /* ─── Theme Colors (non-track) ─── */
@@ -370,4 +371,64 @@
     border-left: 3px solid #ef4444;
     color: #ef4444; font-size: 0.85em;
     margin-bottom: 6px;
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   v1.6.0 — Status Bar, Sort Dropdown, Settings Warnings, Pre-flight Errors
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* ─── Feature 6: Status Bar Health Indicator ─── */
+.ishistory-statusbar {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border-radius: 4px; cursor: pointer;
+    font-size: 0.82em; transition: background 0.15s ease;
+}
+.ishistory-statusbar:hover { background: var(--background-modifier-hover); }
+.ishistory-statusbar-icon {
+    font-weight: 700; font-size: 0.78em;
+    color: var(--text-faint);
+}
+.ishistory-statusbar-text {
+    color: var(--text-muted); font-size: 0.82em;
+}
+.ishistory-statusbar-error .ishistory-statusbar-icon,
+.ishistory-statusbar-error .ishistory-statusbar-text { color: #ef4444; }
+.ishistory-statusbar-ok .ishistory-statusbar-icon,
+.ishistory-statusbar-ok .ishistory-statusbar-text { color: #10b981; }
+
+/* ─── Feature 7: Sort Dropdown ─── */
+.cms-sort-select {
+    padding: 4px 8px; border-radius: 6px; font-size: 0.8em;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary); color: var(--text-normal);
+    cursor: pointer;
+}
+.cms-sort-select:focus {
+    outline: none; border-color: var(--ish-track-a, #7c3aed);
+}
+
+/* ─── Feature 4: Settings Validation Warnings ─── */
+.cms-settings-warnings {
+    margin-bottom: 16px; padding: 12px 16px;
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid rgba(251, 191, 36, 0.2);
+    border-radius: 8px;
+}
+.cms-settings-warnings strong {
+    color: #f59e0b; font-size: 0.88em;
+}
+.cms-settings-warning {
+    color: var(--text-muted); font-size: 0.84em;
+    margin-top: 4px; line-height: 1.4;
+}
+
+/* ─── Feature 1: Pre-flight Validation Error List ─── */
+.cms-preflight-errors {
+    margin: 8px 0; padding-left: 20px;
+    font-size: 0.85em; color: var(--text-muted);
+    line-height: 1.5;
+    max-height: 200px; overflow-y: auto;
+}
+.cms-preflight-errors li {
+    margin-bottom: 2px;
 }

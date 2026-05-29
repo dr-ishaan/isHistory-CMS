@@ -293,10 +293,33 @@ export function normalizePathSetting(path: string): string {
   return path.trim().replace(/\/+$/, "");
 }
 
-/** Convert hex color to rgba string */
+/** Convert hex color to rgba string (safe — falls back to purple on invalid hex) */
 export function hexToRgba(hex: string, alpha: number): string {
+  if (!hex || hex.length < 7 || hex[0] !== "#") return `rgba(124, 58, 237, ${alpha})`;
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return `rgba(124, 58, 237, ${alpha})`;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+// ─── Sort & Filter Types ───
+
+export type SortMode = "seriesOrder" | "dateNewest" | "dateOldest" | "titleAZ" | "errorsFirst" | "draftsFirst";
+
+/** Time threshold for "recently modified" filter (24 hours in ms) */
+export const RECENT_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
+/** Deep-merge source into target (mutates target). Handles nested objects and arrays. */
+export function deepMerge<T extends Record<string, unknown>>(target: T, source: Record<string, unknown>): T {
+  for (const key of Object.keys(source)) {
+    const srcVal = source[key];
+    const tgtVal = target[key as keyof T];
+    if (srcVal && typeof srcVal === "object" && !Array.isArray(srcVal) && tgtVal && typeof tgtVal === "object" && !Array.isArray(tgtVal)) {
+      deepMerge(tgtVal as Record<string, unknown>, srcVal as Record<string, unknown>);
+    } else if (srcVal !== undefined) {
+      (target as Record<string, unknown>)[key] = srcVal;
+    }
+  }
+  return target;
 }

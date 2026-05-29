@@ -3,11 +3,11 @@
  *
  * Orchestrates all plugin components: cache, views, commands,
  * settings, and shared operations.
- * v1.5.0: Fully dynamic tracks, template engine, configurable
- * pre-flight, and runtime CSS injection for track colors.
+ * v1.6.0: Pre-flight validation gate, status bar health indicator,
+ * context menus, deep-merge settings, save failure notices.
  */
 
-import { Plugin, Notice, Modal, type TFile } from "obsidian";
+import { Plugin, Notice, Modal, TFile, type Menu } from "obsidian";
 import {
   type IsHistorySettings,
   type TrackCode,
@@ -18,6 +18,7 @@ import {
   substituteVars,
   getValidationConfig,
   hexToRgba,
+  deepMerge,
 } from "./types";
 import { ContentCache } from "./cache";
 import { validateArchive, validateVault, getStatus } from "./validator";
@@ -36,6 +37,7 @@ export default class IsHistoryPlugin extends Plugin {
   cache!: ContentCache;
   private _ribbonIcon: HTMLElement | null = null;
   private _dynamicStyleEl: HTMLElement | null = null;
+  private _statusBarItem: HTMLElement | null = null;
 
   async onload() {
     try {
@@ -48,6 +50,9 @@ export default class IsHistoryPlugin extends Plugin {
 
       // Inject dynamic CSS for track colors
       this._injectDynamicStyles();
+
+      // ─── Feature 6: Status bar health indicator ───
+      this._initStatusBar();
 
       // Ribbon icon
       if (this.settings.showRibbonIcon) {
@@ -92,6 +97,9 @@ export default class IsHistoryPlugin extends Plugin {
         callback: () => { void this.bulkPreFlight(); },
       });
 
+      // ─── Feature 9: Right-click context menus ───
+      this._registerContextMenus();
+
       // Settings tab
       this.addSettingTab(new IsHistorySettingTab(this.app, this));
     } catch (e) {
@@ -104,12 +112,102 @@ export default class IsHistoryPlugin extends Plugin {
     try {
       this.app.workspace.detachLeavesOfType(VIEW_TYPE_DASHBOARD);
       this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
-      // Clean up injected styles
       this._dynamicStyleEl?.remove();
       this._dynamicStyleEl = null;
+      this._statusBarItem = null;
     } catch (e) {
       console.error("isHistory CMS: onunload error", e);
     }
+  }
+
+  // ─── Feature 6: Status Bar Health Indicator ───
+
+  private _initStatusBar(): void {
+    this._statusBarItem = this.addStatusBarItem();
+    this._statusBarItem.classList.add("ishistory-statusbar");
+    this._statusBarItem.createEl("span", { cls: "ishistory-statusbar-icon", text: "isH" });
+    this._statusBarItem.createEl("span", { cls: "ishistory-statusbar-text", text: " Loading..." });
+    this._statusBarItem.addEventListener("click", () => { void this.activateDashboard(); });
+    this._updateStatusBar();
+  }
+
+  /** Update status bar text — call after cache changes */
+  _updateStatusBar(): void {
+    if (!this._statusBarItem) return;
+    try {
+      const stats = this.cache.getStats(this.settings);
+      const textEl = this._statusBarItem.querySelector(".ishistory-statusbar-text");
+      if (!textEl) return;
+      if (stats.errors > 0) {
+        textEl.textContent = ` ${stats.errors} error${stats.errors !== 1 ? "s" : ""}`;
+        this._statusBarItem.classList.add("ishistory-statusbar-error");
+        this._statusBarItem.classList.remove("ishistory-statusbar-ok");
+      } else if (stats.warnings > 0) {
+        textEl.textContent = ` ${stats.warnings} warning${stats.warnings !== 1 ? "s" : ""}`;
+        this._statusBarItem.classList.remove("ishistory-statusbar-error", "ishistory-statusbar-ok");
+      } else {
+        textEl.textContent = ` ${stats.ready} ready`;
+        this._statusBarItem.classList.add("ishistory-statusbar-ok");
+        this._statusBarItem.classList.remove("ishistory-statusbar-error");
+      }
+    } catch {
+      // Status bar is non-critical; never throw
+    }
+  }
+
+  // ─── Feature 9: Right-click Context Menus ───
+
+  private _registerContextMenus(): void {
+    // File explorer context menu
+    this.registerEvent(
+      this.app.workspace.on("file-menu" as never, (menu: Menu, file) => {
+        // file is TAbstractFile — check if it has a path ending in .md
+        const abstractFile = file as unknown as { path?: string };
+        if (typeof abstractFile.path !== "string" || !abstractFile.path.endsWith(".md")) return;
+        if (!this.cache.isInCollection(abstractFile.path, this.settings)) return;
+        const tFile = file as unknown as TFile;
+        menu.addItem((item) => {
+          item.setTitle("Validate with isHistory")
+            .setIcon("checklist")
+            .onClick(() => {
+              const result = this.validateFile(tFile);
+              new Notice(
+                result.errors.length === 0
+                  ? `${tFile.basename}: All fields valid!`
+                  : `${tFile.basename}: ${result.errors.filter((e) => e.severity === "error").length} error(s), ${result.errors.filter((e) => e.severity === "warning").length} warning(s)`
+              );
+            });
+        });
+        menu.addItem((item) => {
+          item.setTitle("Pre-flight with isHistory")
+            .setIcon("upload-cloud")
+            .onClick(() => { void this.preflightFile(tFile); });
+        });
+        menu.addItem((item) => {
+          item.setTitle("Open in isHistory Dashboard")
+            .setIcon("book-open")
+            .onClick(() => { void this.activateDashboard(); });
+        });
+      })
+    );
+
+    // Editor context menu
+    this.registerEvent(
+      this.app.workspace.on("editor-menu" as never, (menu: Menu) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || !this.cache.isInCollection(file.path, this.settings)) return;
+        menu.addItem((item) => {
+          item.setTitle("Validate this post")
+            .setIcon("checklist")
+            .onClick(() => this.validateCurrent());
+        });
+        menu.addItem((item) => {
+          item.setTitle("Pre-flight this post")
+            .setIcon("upload-cloud")
+            .onClick(() => { void this.publishCurrent(); });
+        });
+      })
+    );
   }
 
   // ─── Dynamic Track Commands ───
@@ -126,7 +224,6 @@ export default class IsHistoryPlugin extends Plugin {
 
   // ─── Dynamic CSS Injection ───
 
-  /** Inject CSS variables and per-track styles from settings */
   _injectDynamicStyles(): void {
     let el = document.getElementById("ishistory-dynamic-styles") as HTMLElement | null;
     if (!el) {
@@ -138,19 +235,16 @@ export default class IsHistoryPlugin extends Plugin {
     this._updateDynamicStyles();
   }
 
-  /** Update the injected CSS — call when tracks change */
   _updateDynamicStyles(): void {
     if (!this._dynamicStyleEl) return;
     const rules: string[] = [];
 
-    // CSS custom properties for track colors
     rules.push(":root {");
     for (const [code, info] of Object.entries(this.settings.tracks)) {
       rules.push(`--ish-track-${code.toLowerCase()}: ${info.color};`);
     }
     rules.push("}");
 
-    // Per-track card code styles
     for (const [code, info] of Object.entries(this.settings.tracks)) {
       const lc = code.toLowerCase();
       rules.push(`.cms-card-code-${lc} { background: ${hexToRgba(info.color, 0.15)}; color: ${info.color}; }`);
@@ -158,7 +252,6 @@ export default class IsHistoryPlugin extends Plugin {
       rules.push(`.cms-stat-track-${lc} .cms-stat-value { color: ${info.color}; }`);
     }
 
-    // Track tag styles (use primary track color with low opacity)
     const primaryColor = Object.values(this.settings.tracks)[0]?.color || "#7c3aed";
     rules.push(`.cms-card-tag { background: ${hexToRgba(primaryColor, 0.1)}; color: var(--ish-track-a, ${primaryColor}); }`);
     rules.push(`.cms-tag-chip { background: ${hexToRgba(primaryColor, 0.08)}; color: var(--ish-track-a, ${primaryColor}); }`);
@@ -172,7 +265,12 @@ export default class IsHistoryPlugin extends Plugin {
     try {
       const loaded = await this.loadData();
       const migrated = migrateSettings(loaded || {});
-      this.settings = Object.assign({}, DEFAULT_SETTINGS, migrated) as IsHistorySettings;
+      // ─── Feature 5: Deep-merge instead of shallow assign ───
+      // Start from defaults, then deep-merge migrated values on top
+      this.settings = deepMerge(
+        Object.assign({}, DEFAULT_SETTINGS) as unknown as Record<string, unknown>,
+        migrated as Record<string, unknown>,
+      ) as unknown as IsHistorySettings;
       this.settings._version = DEFAULT_SETTINGS._version;
       this.settings.archivePath = normalizePathSetting(this.settings.archivePath);
       this.settings.vaultPath = normalizePathSetting(this.settings.vaultPath);
@@ -185,11 +283,14 @@ export default class IsHistoryPlugin extends Plugin {
     }
   }
 
+  // ─── Feature 3: Failed save Notice ───
+
   async saveSettings() {
     try {
       await this.saveData(this.settings);
     } catch (e) {
       console.error("isHistory CMS: saveSettings failed", e);
+      new Notice("Failed to save settings. Your changes may be lost on restart.");
     }
   }
 
@@ -204,6 +305,8 @@ export default class IsHistoryPlugin extends Plugin {
           leaf.view.requestRender();
         }
       }
+      // Update status bar after every rescan
+      this._updateStatusBar();
     } catch (e) {
       console.error("isHistory CMS: rescanCache failed", e);
     }
@@ -303,11 +406,41 @@ export default class IsHistoryPlugin extends Plugin {
     }
   }
 
-  // ─── Shared Pre-flight (configurable) ───
+  // ─── Feature 1: Pre-flight with validation gate ───
 
   async preflightFile(file: TFile): Promise<void> {
     if (!file) return;
     try {
+      // Validate first — warn if errors exist
+      const result = this.validateFile(file);
+      const hasErrors = result.errors.some((e) => e.severity === "error");
+      if (hasErrors) {
+        const errorCount = result.errors.filter((e) => e.severity === "error").length;
+        const warningCount = result.errors.filter((e) => e.severity === "warning").length;
+        const confirmed = await new Promise<boolean>((resolve) => {
+          const modal = new Modal(this.app);
+          modal.titleEl.setText("Validation errors found");
+          const body = modal.contentEl.createEl("div");
+          body.createEl("p", {
+            text: `This post has ${errorCount} error${errorCount !== 1 ? "s" : ""} and ${warningCount} warning${warningCount !== 1 ? "s" : ""}. Pre-flighting will mark it as ready for publication despite these issues.`,
+          });
+          const errList = body.createEl("ul", { cls: "cms-preflight-errors" });
+          for (const err of result.errors.slice(0, 5)) {
+            errList.createEl("li", { text: `${err.field}: ${err.message}` });
+          }
+          if (result.errors.length > 5) {
+            errList.createEl("li", { text: `...and ${result.errors.length - 5} more`, cls: "cms-card-error-more" });
+          }
+          const btnRow = body.createEl("div", { cls: "cms-modal-btn-row" });
+          btnRow.createEl("button", { text: "Cancel", cls: "cms-btn cms-btn-secondary" })
+            .addEventListener("click", () => { modal.close(); resolve(false); });
+          btnRow.createEl("button", { text: "Pre-flight anyway", cls: "cms-btn cms-btn-primary" })
+            .addEventListener("click", () => { modal.close(); resolve(true); });
+          modal.open();
+        });
+        if (!confirmed) return;
+      }
+
       await this.app.fileManager.processFrontMatter(file, (fm) => {
         fm.draft = this.settings.preflightDraft;
         fm.status = this.settings.preflightStatus;
@@ -316,6 +449,7 @@ export default class IsHistoryPlugin extends Plugin {
         }
       });
       new Notice(`Pre-flighted: ${file.basename}. Sync with Git to deploy.`);
+      this._updateStatusBar();
     } catch (e) {
       new Notice(`Pre-flight failed: ${(e as Error).message}`);
     }
@@ -344,10 +478,8 @@ export default class IsHistoryPlugin extends Plugin {
         return;
       }
 
-      // Template variables
       const vars: Record<string, string> = {};
 
-      // Find next seriesOrder number
       const existingOrders = this.cache
         .getSortedItems("archive", this.settings.tracks)
         .filter((i) => i.track === track && i.seriesOrder)
@@ -365,11 +497,9 @@ export default class IsHistoryPlugin extends Plugin {
       vars.date = new Date().toISOString().split("T")[0];
       vars.series = this.settings.defaultSeries || "";
 
-      // Build slug from template
       const slug = substituteVars(this.settings.newPostSlug, vars);
       let path = `${normalizePathSetting(this.settings.archivePath)}/${slug}.md`;
 
-      // Avoid file path collision
       let suffix = 0;
       while (this.app.vault.getAbstractFileByPath(path)) {
         suffix++;
@@ -379,11 +509,9 @@ export default class IsHistoryPlugin extends Plugin {
         path = `${normalizePathSetting(this.settings.archivePath)}/${collSlug}.md`;
       }
 
-      // Reset vars for template
       vars.seriesOrder = suffix > 0 ? `${seriesOrder}-${suffix}` : seriesOrder;
       vars.seriesOrderLower = vars.seriesOrder.toLowerCase();
 
-      // Build content from template settings
       const title = substituteVars(this.settings.newPostTitle, vars);
       const image = substituteVars(this.settings.newPostImage, vars);
       const status = this.settings.newPostStatus;
@@ -429,6 +557,7 @@ ${body}`;
       const warnings = items.filter((i) => i.validation.status === "warning").length;
       const ready = items.filter((i) => i.validation.status === "ready").length;
       new Notice(`${items.length} posts: ${ready} ready, ${errors} errors, ${warnings} warnings`);
+      this._updateStatusBar();
     } catch (e) {
       new Notice(`Bulk validate failed: ${(e as Error).message}`);
     }
@@ -480,6 +609,7 @@ ${body}`;
       new Notice(
         `Pre-flighted ${published}/${drafts.length} draft(s). Sync with Git to deploy.`
       );
+      this._updateStatusBar();
     } catch (e) {
       new Notice(`Bulk pre-flight failed: ${(e as Error).message}`);
     }

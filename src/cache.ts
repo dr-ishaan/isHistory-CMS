@@ -19,6 +19,8 @@ import {
   normalizePathSetting,
   getValidationConfig,
   buildSeriesOrderRegex,
+  RECENT_THRESHOLD_MS,
+  type SortMode,
 } from "./types";
 import { validateArchive, validateVault, getStatus } from "./validator";
 
@@ -231,36 +233,65 @@ export class ContentCache {
     }
   }
 
-  // ─── Sorting (dynamic regex) ───
+  // ─── Sorting (dynamic regex + SortMode) ───
 
-  getSortedItems(collection?: CollectionType, tracks?: Record<string, unknown>): ContentItem[] {
+  getSortedItems(collection?: CollectionType, tracks?: Record<string, unknown>, sortMode?: SortMode): ContentItem[] {
     const items = [...this.items.values()];
     const filtered = collection
       ? items.filter((i) => i.collection === collection)
       : items;
     const trackKeys = tracks ? Object.keys(tracks) : ["A", "P", "E"];
+    const mode = sortMode || "seriesOrder";
 
     return filtered.sort((a, b) => {
-      const ao = a.seriesOrder || "";
-      const bo = b.seriesOrder || "";
-
-      if (ao && bo) {
-        const codes = trackKeys.join("");
-        const parseOrder = (s: string) => {
-          const m = s.match(new RegExp(`^([${codes}])(\\d+)$`));
-          return m ? { track: m[1], num: parseInt(m[2], 10) } : null;
-        };
-        const pa = parseOrder(ao);
-        const pb = parseOrder(bo);
-        if (pa && pb) {
-          if (pa.track !== pb.track) return pa.track.localeCompare(pb.track);
-          return pa.num - pb.num;
+      // Sort by chosen mode
+      switch (mode) {
+        case "dateNewest": {
+          const da = a.date ? Date.parse(a.date) || 0 : 0;
+          const db = b.date ? Date.parse(b.date) || 0 : 0;
+          return db - da;
         }
-        return ao.localeCompare(bo);
+        case "dateOldest": {
+          const da2 = a.date ? Date.parse(a.date) || Infinity : Infinity;
+          const db2 = b.date ? Date.parse(b.date) || Infinity : Infinity;
+          return da2 - db2;
+        }
+        case "titleAZ":
+          return a.title.localeCompare(b.title);
+        case "errorsFirst": {
+          const va = a.validation.status === "error" ? 0 : a.validation.status === "warning" ? 1 : 2;
+          const vb = b.validation.status === "error" ? 0 : b.validation.status === "warning" ? 1 : 2;
+          return va - vb;
+        }
+        case "draftsFirst": {
+          const da3 = a.draft ? 0 : 1;
+          const db3 = b.draft ? 0 : 1;
+          return da3 - db3;
+        }
+        case "seriesOrder":
+        default: {
+          const ao = a.seriesOrder || "";
+          const bo = b.seriesOrder || "";
+
+          if (ao && bo) {
+            const codes = trackKeys.join("");
+            const parseOrder = (s: string) => {
+              const m = s.match(new RegExp(`^([${codes}])(\\d+)$`));
+              return m ? { track: m[1], num: parseInt(m[2], 10) } : null;
+            };
+            const pa = parseOrder(ao);
+            const pb = parseOrder(bo);
+            if (pa && pb) {
+              if (pa.track !== pb.track) return pa.track.localeCompare(pb.track);
+              return pa.num - pb.num;
+            }
+            return ao.localeCompare(bo);
+          }
+          if (ao) return -1;
+          if (bo) return 1;
+          return a.path.localeCompare(b.path);
+        }
       }
-      if (ao) return -1;
-      if (bo) return 1;
-      return a.path.localeCompare(b.path);
     });
   }
 
@@ -306,6 +337,12 @@ export class ContentCache {
     if (filter === "ready" && item.validation.status !== "ready") return false;
     if (filter === "errors" && item.validation.status !== "error") return false;
     if (filter === "warnings" && item.validation.status !== "warning") return false;
+    // Feature 8: Recently modified filter (24h)
+    if (filter === "recent") {
+      const mtime = item.file.stat?.mtime;
+      if (!mtime) return false;
+      return (Date.now() - mtime) < RECENT_THRESHOLD_MS;
+    }
     return true;
   }
 
