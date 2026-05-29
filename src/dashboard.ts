@@ -14,7 +14,7 @@ import {
   TRACKS,
   DEFAULT_SETTINGS,
 } from "./types";
-import { IsHistoryPlugin } from "./main";
+import IsHistoryPlugin from "./main";
 
 export const VIEW_TYPE_DASHBOARD = "ishistory-dashboard";
 
@@ -387,9 +387,11 @@ export class IsHistoryDashboardView extends ItemView {
   // ─── Card DOM Building ───
 
   private _buildCardDOM(item: ContentItem): HTMLElement {
-    // Build card off-DOM using a document fragment to avoid flicker
-    const frag = document.createDocumentFragment();
-    const card = frag.createEl("div", {
+    // Build card off-DOM to avoid flicker.
+    // Must use HTMLElement (not DocumentFragment) because Obsidian's createEl
+    // is patched onto HTMLElement.prototype — DocumentFragment doesn't have it.
+    const tempEl = document.createElement("div");
+    const card = tempEl.createEl("div", {
       cls: `cms-card cms-card-${item.validation.status} cms-card-${item.collection}${item.track ? " cms-card-track-" + item.track : ""}`,
       attr: {
         "data-path": item.path,

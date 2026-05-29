@@ -7,7 +7,7 @@
 
 import { PluginSettingTab, type App, Setting } from "obsidian";
 import { type IsHistorySettings, SETTINGS_VERSION, DEFAULT_SETTINGS, normalizePathSetting } from "./types";
-import { IsHistoryPlugin } from "./main";
+import IsHistoryPlugin from "./main";
 
 export class IsHistorySettingTab extends PluginSettingTab {
   plugin: IsHistoryPlugin;

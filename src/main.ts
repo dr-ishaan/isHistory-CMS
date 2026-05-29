@@ -26,7 +26,7 @@ import {
 } from "./sidebar";
 import { TRACKS } from "./types";
 
-export class IsHistoryPlugin extends Plugin {
+export default class IsHistoryPlugin extends Plugin {
   settings!: IsHistorySettings;
   cache!: ContentCache;
   private _ribbonIcon: HTMLElement | null = null;

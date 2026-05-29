@@ -7,7 +7,7 @@
 
 import { ItemView, type WorkspaceLeaf, Notice, type TFile } from "obsidian";
 import { type IsHistorySettings, TRACKS, normalizePathSetting } from "./types";
-import { IsHistoryPlugin } from "./main";
+import IsHistoryPlugin from "./main";
 
 export const VIEW_TYPE_SIDEBAR = "ishistory-sidebar";
 
