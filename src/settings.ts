@@ -2,665 +2,980 @@
  * isHistory CMS Plugin — Settings Tab
  *
  * Configuration UI for all plugin settings.
- * v1.5.0: Full settings UI with track editor, status editor,
- * validation thresholds, display limits, template editor,
- * and pre-flight behavior controls.
- * Designed for non-technical users with plain-English labels.
+ * v1.5.0: Full settings UI designed for non-technical users.
+ *   - NO sliders: number inputs with unit labels and hints
+ *   - Toggles for booleans, dropdowns for choices from lists
+ *   - Visual track editor with color picker
+ *   - Tag/chip editor for statuses and required fields
+ *   - Template variable insert buttons above textareas
+ *   - Reset-to-default buttons on every section
  */
 
-import { PluginSettingTab, type App, Setting, Modal } from "obsidian";
+import { PluginSettingTab, type App, Setting, Modal, Notice } from "obsidian";
 import {
-  type TrackInfo,
-  SETTINGS_VERSION,
-  DEFAULT_SETTINGS,
-  DEFAULT_TRACKS,
-  DEFAULT_STATUSES,
-  normalizePathSetting,
-  TEMPLATE_VARIABLES,
+	type TrackInfo,
+	SETTINGS_VERSION,
+	DEFAULT_SETTINGS,
+	DEFAULT_TRACKS,
+	DEFAULT_STATUSES,
+	normalizePathSetting,
+	TEMPLATE_VARIABLES,
 } from "./types";
 import IsHistoryPlugin from "./main";
 
 export class IsHistorySettingTab extends PluginSettingTab {
-  plugin: IsHistoryPlugin;
-  private _rescanTimer: ReturnType<typeof setTimeout> | null = null;
+	plugin: IsHistoryPlugin;
+	private _rescanTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(app: App, plugin: IsHistoryPlugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
+	constructor(app: App, plugin: IsHistoryPlugin) {
+		super(app, plugin);
+		this.plugin = plugin;
+	}
 
-  private _debouncedRescan(delay = 600): void {
-    if (this._rescanTimer) clearTimeout(this._rescanTimer);
-    this._rescanTimer = setTimeout(() => {
-      this.plugin.rescanCache();
-    }, delay);
-  }
+	private _debouncedRescan(delay = 600): void {
+		if (this._rescanTimer) clearTimeout(this._rescanTimer);
+		this._rescanTimer = setTimeout(() => {
+			this.plugin.rescanCache();
+		}, delay);
+	}
 
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
+	/** Helper: create a number input with unit label and optional reset */
+	private _addNumberInput(
+		containerEl: HTMLElement,
+		opts: {
+			name: string;
+			desc: string;
+			value: number;
+			unit: string;
+			placeholder?: string;
+			min?: number;
+			max?: number;
+			step?: number;
+			defaultValue: number;
+			onChange: (v: number) => void;
+		},
+	): void {
+		const s = new Setting(containerEl)
+			.setName(opts.name)
+			.setDesc(opts.desc);
+		s.addText((text) => {
+			text.inputEl.type = "number";
+			text.inputEl.classList.add("cms-number-input");
+			if (opts.min !== undefined) text.inputEl.min = String(opts.min);
+			if (opts.max !== undefined) text.inputEl.max = String(opts.max);
+			if (opts.step !== undefined) text.inputEl.step = String(opts.step);
+			if (opts.placeholder) text.inputEl.placeholder = opts.placeholder;
+			text.setValue(String(opts.value));
+			text.onChange(async (v) => {
+				const num = parseInt(v, 10);
+				if (!isNaN(num)) {
+					opts.onChange(num);
+					await this.plugin.saveSettings();
+					this._debouncedRescan();
+				}
+			});
+		});
+		// Unit label
+		const unitSpan = s.controlEl.createSpan({ text: opts.unit, cls: "cms-input-unit" });
+		s.controlEl.appendChild(unitSpan);
+		// Reset button
+		s.addExtraButton((btn) => {
+			btn.setIcon("reset")
+				.setTooltip(`Reset to default (${opts.defaultValue} ${opts.unit})`)
+				.onClick(async () => {
+					opts.onChange(opts.defaultValue);
+					await this.plugin.saveSettings();
+					this._debouncedRescan();
+					this.display();
+				});
+		});
+	}
 
-    // ─── Content Paths ───
-    containerEl.createEl("h2", { text: "Content Paths" });
-    new Setting(containerEl)
-      .setName("Archive path")
-      .setDesc("Folder with your blog posts (default: src/content/blog)")
-      .addText((text) =>
-        text
-          .setPlaceholder("src/content/blog")
-          .setValue(this.plugin.settings.archivePath)
-          .onChange(async (v) => {
-            this.plugin.settings.archivePath = normalizePathSetting(v);
-            await this.plugin.saveSettings();
-            this._debouncedRescan();
-          })
-      );
-    new Setting(containerEl)
-      .setName("Vault path")
-      .setDesc("Folder with your research notes (default: src/content/vault)")
-      .addText((text) =>
-        text
-          .setPlaceholder("src/content/vault")
-          .setValue(this.plugin.settings.vaultPath)
-          .onChange(async (v) => {
-            this.plugin.settings.vaultPath = normalizePathSetting(v);
-            await this.plugin.saveSettings();
-            this._debouncedRescan();
-          })
-      );
+	display(): void {
+		const { containerEl } = this;
+		containerEl.empty();
 
-    // ─── Tracks ───
-    containerEl.createEl("h2", { text: "Tracks" });
-    containerEl.createEl("p", {
-      text: "Tracks organize your content by type. Each track has a code (used in seriesOrder like A1, P3), a name, an emoji, and a color.",
-      cls: "cms-settings-hint",
-    });
+		// ═══════════════════════════════════════════════════════════
+		//  CONTENT PATHS
+		// ═══════════════════════════════════════════════════════════
+		containerEl.createEl("h2", { text: "Content Paths" });
+		containerEl.createEl("p", {
+			text: "Where your blog posts and research notes live inside the vault. These should match your Astro project's content folder structure.",
+			cls: "cms-settings-hint",
+		});
 
-    for (const [code, info] of Object.entries(this.plugin.settings.tracks)) {
-      new Setting(containerEl)
-        .setName(`${info.emoji} ${info.name} (${code})`)
-        .setDesc(`Color: ${info.color}`)
-        .addButton((btn) =>
-          btn.setButtonText("Edit").onClick(() => {
-            new TrackEditorModal(this.app, this.plugin, code, info, () => this.display()).open();
-          })
-        )
-        .addButton((btn) =>
-          btn.setButtonText("Remove").setWarning().onClick(async () => {
-            delete this.plugin.settings.tracks[code];
-            await this.plugin.saveSettings();
-            this.plugin._updateDynamicStyles();
-            this._debouncedRescan();
-            this.display();
-          })
-        );
-    }
+		new Setting(containerEl)
+			.setName("Archive path")
+			.setDesc("Folder with your blog posts (e.g. src/content/blog)")
+			.addText((text) =>
+				text
+					.setPlaceholder("src/content/blog")
+					.setValue(this.plugin.settings.archivePath)
+					.onChange(async (v) => {
+						this.plugin.settings.archivePath = normalizePathSetting(v);
+						await this.plugin.saveSettings();
+						this._debouncedRescan();
+					})
+			)
+			.addExtraButton((btn) =>
+				btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+					this.plugin.settings.archivePath = DEFAULT_SETTINGS.archivePath;
+					await this.plugin.saveSettings();
+					this._debouncedRescan();
+					this.display();
+				})
+			);
 
-    new Setting(containerEl)
-      .setName("Add a new track")
-      .setDesc("Create a new content track with its own code, name, emoji, and color")
-      .addButton((btn) =>
-        btn.setButtonText("+ Add Track").setCta().onClick(() => {
-          new TrackEditorModal(this.app, this.plugin, null, null, () => this.display()).open();
-        })
-      );
+		new Setting(containerEl)
+			.setName("Vault path")
+			.setDesc("Folder with your research notes (e.g. src/content/vault)")
+			.addText((text) =>
+				text
+					.setPlaceholder("src/content/vault")
+					.setValue(this.plugin.settings.vaultPath)
+					.onChange(async (v) => {
+						this.plugin.settings.vaultPath = normalizePathSetting(v);
+						await this.plugin.saveSettings();
+						this._debouncedRescan();
+					})
+			)
+			.addExtraButton((btn) =>
+				btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+					this.plugin.settings.vaultPath = DEFAULT_SETTINGS.vaultPath;
+					await this.plugin.saveSettings();
+					this._debouncedRescan();
+					this.display();
+				})
+			);
 
-    // ─── Statuses ───
-    containerEl.createEl("h2", { text: "Statuses" });
-    containerEl.createEl("p", {
-      text: "Statuses describe the publication stage of a post. Add or remove statuses to match your workflow.",
-      cls: "cms-settings-hint",
-    });
+		// ═══════════════════════════════════════════════════════════
+		//  TRACKS
+		// ═══════════════════════════════════════════════════════════
+		containerEl.createEl("h2", { text: "Tracks" });
+		containerEl.createEl("p", {
+			text: "Tracks organize your content by type. Each track has a short code (used in seriesOrder like A1, P3), a display name, an emoji, and a color. You can add, edit, or remove tracks to match your content categories.",
+			cls: "cms-settings-hint",
+		});
 
-    for (const status of this.plugin.settings.statuses) {
-      new Setting(containerEl)
-        .setName(status)
-        .addButton((btn) =>
-          btn.setButtonText("Remove").setWarning().onClick(async () => {
-            this.plugin.settings.statuses = this.plugin.settings.statuses.filter((s) => s !== status);
-            await this.plugin.saveSettings();
-            this._debouncedRescan();
-            this.display();
-          })
-        );
-    }
+		for (const [code, info] of Object.entries(this.plugin.settings.tracks)) {
+			new Setting(containerEl)
+				.setName(`${info.emoji} ${info.name}`)
+				.setDesc(`Code: ${code} \u00B7 Color: ${info.color}`)
+				.addButton((btn) =>
+					btn.setButtonText("Edit").onClick(() => {
+						new TrackEditorModal(this.app, this.plugin, code, info, () => this.display()).open();
+					})
+				)
+				.addButton((btn) =>
+					btn.setButtonText("Remove").setWarning().onClick(async () => {
+						delete this.plugin.settings.tracks[code];
+						await this.plugin.saveSettings();
+						this.plugin._updateDynamicStyles();
+						this._debouncedRescan();
+						this.display();
+					})
+				);
+		}
 
-    new Setting(containerEl)
-      .setName("Add a new status")
-      .addText((text) => {
-        text.setPlaceholder("e.g. archived, featured");
-        text.onChange(() => { /* track input */ });
-        const input = text.inputEl;
-        const addBtn = input.parentElement?.querySelector(".cms-add-status-btn") as HTMLElement;
-        if (addBtn) {
-          // Wire button after it's created
-        }
-      })
-      .addButton((btn) => {
-        btn.setButtonText("Add").setCta();
-        btn.buttonEl.classList.add("cms-add-status-btn");
-        btn.onClick(async () => {
-          const input = containerEl.querySelector(".cms-add-status-btn")?.parentElement?.querySelector("input") as HTMLInputElement;
-          const value = input?.value?.trim();
-          if (value && !this.plugin.settings.statuses.includes(value)) {
-            this.plugin.settings.statuses.push(value);
-            await this.plugin.saveSettings();
-            this._debouncedRescan();
-            this.display();
-          }
-        });
-      });
+		new Setting(containerEl)
+			.setName("Add a new track")
+			.setDesc("Create a new content category with its own code, name, emoji, and color")
+			.addButton((btn) =>
+				btn.setButtonText("+ Add Track").setCta().onClick(() => {
+					new TrackEditorModal(this.app, this.plugin, null, null, () => this.display()).open();
+				})
+			);
 
-    // ─── Validation Rules ───
-    containerEl.createEl("h2", { text: "Validation Rules" });
-    containerEl.createEl("p", {
-      text: "These rules check your frontmatter for common mistakes. Adjust the thresholds to match your SEO requirements.",
-      cls: "cms-settings-hint",
-    });
+		// Reset tracks
+		new Setting(containerEl)
+			.setName("Reset tracks to default")
+			.setDesc(`Restore the default tracks: ${Object.entries(DEFAULT_TRACKS).map(([c, i]) => `${i.emoji} ${i.name} (${c})`).join(", ")}`)
+			.addButton((btn) =>
+				btn.setButtonText("Reset").setWarning().onClick(async () => {
+					this.plugin.settings.tracks = { ...DEFAULT_TRACKS };
+					await this.plugin.saveSettings();
+					this.plugin._updateDynamicStyles();
+					this._debouncedRescan();
+					this.display();
+					new Notice("Tracks reset to defaults.");
+				})
+			);
 
-    new Setting(containerEl)
-      .setName("Minimum title length")
-      .setDesc("Titles shorter than this will be flagged as errors")
-      .addSlider((slider) =>
-        slider.setLimits(1, 20, 1).setValue(this.plugin.settings.minTitleLength)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.minTitleLength = v;
-            await this.plugin.saveSettings();
-            this._debouncedRescan();
-          })
-      );
+		// ═══════════════════════════════════════════════════════════
+		//  STATUSES — tag/chip editor
+		// ═══════════════════════════════════════════════════════════
+		containerEl.createEl("h2", { text: "Post Statuses" });
+		containerEl.createEl("p", {
+			text: "Statuses describe the publication stage of a post (e.g. published, upcoming, planned). These appear as filter options and in the pre-flight settings.",
+			cls: "cms-settings-hint",
+		});
 
-    new Setting(containerEl)
-      .setName("Maximum title length")
-      .setDesc("Titles longer than this will be flagged as warnings")
-      .addSlider((slider) =>
-        slider.setLimits(50, 200, 5).setValue(this.plugin.settings.maxTitleLength)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.maxTitleLength = v;
-            await this.plugin.saveSettings();
-            this._debouncedRescan();
-          })
-      );
+		// Current statuses as removable chips
+		const statusChipRow = containerEl.createEl("div", { cls: "cms-chip-row" });
+		for (const status of this.plugin.settings.statuses) {
+			const chip = statusChipRow.createEl("span", { cls: "cms-chip" });
+			chip.createSpan({ text: status, cls: "cms-chip-text" });
+			const removeBtn = chip.createEl("button", { cls: "cms-chip-remove", attr: { "aria-label": `Remove ${status}` } });
+			removeBtn.setText("\u00D7");
+			removeBtn.addEventListener("click", async () => {
+				this.plugin.settings.statuses = this.plugin.settings.statuses.filter((s) => s !== status);
+				await this.plugin.saveSettings();
+				this._debouncedRescan();
+				this.display();
+			});
+		}
 
-    new Setting(containerEl)
-      .setName("Minimum description length")
-      .setDesc("Descriptions shorter than this will be flagged as errors")
-      .addSlider((slider) =>
-        slider.setLimits(5, 50, 1).setValue(this.plugin.settings.minDescriptionLength)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.minDescriptionLength = v;
-            await this.plugin.saveSettings();
-            this._debouncedRescan();
-          })
-      );
+		// Add new status
+		const addStatusSetting = new Setting(containerEl)
+			.setName("Add a new status");
+		addStatusSetting.addText((text) => {
+			text.setPlaceholder("e.g. archived, featured, draft");
+			text.inputEl.classList.add("cms-add-status-input");
+			text.onChange(() => { /* track input for button wiring */ });
+		});
+		addStatusSetting.addButton((btn) => {
+			btn.setButtonText("Add").setCta();
+			btn.buttonEl.classList.add("cms-add-status-btn");
+			btn.onClick(async () => {
+				const input = containerEl.querySelector(".cms-add-status-input") as HTMLInputElement | null;
+				const value = input?.value?.trim().toLowerCase();
+				if (!value) {
+					new Notice("Please type a status name first.");
+					return;
+				}
+				if (this.plugin.settings.statuses.includes(value)) {
+					new Notice(`Status "${value}" already exists.`);
+					return;
+				}
+				this.plugin.settings.statuses.push(value);
+				await this.plugin.saveSettings();
+				this._debouncedRescan();
+				this.display();
+				new Notice(`Added status: ${value}`);
+			});
+		});
 
-    new Setting(containerEl)
-      .setName("Maximum description length")
-      .setDesc("Descriptions longer than this will be flagged as warnings")
-      .addSlider((slider) =>
-        slider.setLimits(80, 300, 5).setValue(this.plugin.settings.maxDescriptionLength)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.maxDescriptionLength = v;
-            await this.plugin.saveSettings();
-            this._debouncedRescan();
-          })
-      );
+		// Reset statuses
+		new Setting(containerEl)
+			.setName("Reset statuses to default")
+			.setDesc(`Restore: ${[...DEFAULT_STATUSES].join(", ")}`)
+			.addButton((btn) =>
+				btn.setButtonText("Reset").setWarning().onClick(async () => {
+					this.plugin.settings.statuses = [...DEFAULT_STATUSES];
+					await this.plugin.saveSettings();
+					this._debouncedRescan();
+					this.display();
+					new Notice("Statuses reset to defaults.");
+				})
+			);
 
-    new Setting(containerEl)
-      .setName("Image path must start with")
-      .setDesc("Hero image paths should begin with this prefix (e.g. / or ./)")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.imagePrefix).onChange(async (v) => {
-          this.plugin.settings.imagePrefix = v;
-          await this.plugin.saveSettings();
-          this._debouncedRescan();
-        })
-      );
+		// ═══════════════════════════════════════════════════════════
+		//  VALIDATION RULES — number inputs with unit labels
+		// ═══════════════════════════════════════════════════════════
+		containerEl.createEl("h2", { text: "Validation Rules" });
+		containerEl.createEl("p", {
+			text: "These rules check your frontmatter for common mistakes. The plugin will flag titles and descriptions that are too short (errors) or too long (warnings). Adjust the thresholds to match your SEO requirements.",
+			cls: "cms-settings-hint",
+		});
 
-    new Setting(containerEl)
-      .setName("Required archive fields")
-      .setDesc("Comma-separated list of frontmatter fields that must be present (e.g. title, date, description)")
-      .addText((text) =>
-        text.setValue(this.plugin.settings.requiredArchiveFields.join(", ")).onChange(async (v) => {
-          this.plugin.settings.requiredArchiveFields = v.split(",").map((s) => s.trim()).filter((s) => s);
-          await this.plugin.saveSettings();
-          this._debouncedRescan();
-        })
-      );
+		this._addNumberInput(containerEl, {
+			name: "Minimum title length",
+			desc: "Titles shorter than this will be flagged as errors. Search engines prefer titles with at least a few words.",
+			value: this.plugin.settings.minTitleLength,
+			unit: "chars",
+			min: 1,
+			max: 50,
+			step: 1,
+			defaultValue: DEFAULT_SETTINGS.minTitleLength,
+			onChange: (v) => { this.plugin.settings.minTitleLength = v; },
+		});
 
-    // ─── Card Display ───
-    containerEl.createEl("h2", { text: "Card Display" });
-    containerEl.createEl("p", {
-      text: "Control how much information is shown on each card in the dashboard.",
-      cls: "cms-settings-hint",
-    });
+		this._addNumberInput(containerEl, {
+			name: "Maximum title length",
+			desc: "Titles longer than this will be flagged as warnings. Google truncates titles around 60 characters in results.",
+			value: this.plugin.settings.maxTitleLength,
+			unit: "chars",
+			min: 30,
+			max: 300,
+			step: 5,
+			defaultValue: DEFAULT_SETTINGS.maxTitleLength,
+			onChange: (v) => { this.plugin.settings.maxTitleLength = v; },
+		});
 
-    new Setting(containerEl)
-      .setName("Cards per page")
-      .setDesc("How many cards to show before the 'Load More' button")
-      .addSlider((slider) =>
-        slider.setLimits(10, 200, 10).setValue(this.plugin.settings.cardsPerPage)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.cardsPerPage = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		this._addNumberInput(containerEl, {
+			name: "Minimum description length",
+			desc: "Descriptions shorter than this will be flagged as errors. Good meta descriptions help with search engine optimization.",
+			value: this.plugin.settings.minDescriptionLength,
+			unit: "chars",
+			min: 1,
+			max: 100,
+			step: 1,
+			defaultValue: DEFAULT_SETTINGS.minDescriptionLength,
+			onChange: (v) => { this.plugin.settings.minDescriptionLength = v; },
+		});
 
-    new Setting(containerEl)
-      .setName("Description preview length")
-      .setDesc("How many characters of the description to show on each card")
-      .addSlider((slider) =>
-        slider.setLimits(50, 300, 10).setValue(this.plugin.settings.descriptionTruncation)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.descriptionTruncation = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		this._addNumberInput(containerEl, {
+			name: "Maximum description length",
+			desc: "Descriptions longer than this will be flagged as warnings. Google typically shows about 155-160 characters of meta descriptions.",
+			value: this.plugin.settings.maxDescriptionLength,
+			unit: "chars",
+			min: 50,
+			max: 500,
+			step: 5,
+			defaultValue: DEFAULT_SETTINGS.maxDescriptionLength,
+			onChange: (v) => { this.plugin.settings.maxDescriptionLength = v; },
+		});
 
-    new Setting(containerEl)
-      .setName("Figures preview length")
-      .setDesc("How many characters of the figures field to show on each card")
-      .addSlider((slider) =>
-        slider.setLimits(20, 150, 5).setValue(this.plugin.settings.figuresTruncation)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.figuresTruncation = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		// Image prefix — text input
+		new Setting(containerEl)
+			.setName("Image path must start with")
+			.setDesc("Hero image paths should begin with this prefix. Typically \"/\" for absolute paths or \"./\" for relative paths.")
+			.addText((text) =>
+				text.setValue(this.plugin.settings.imagePrefix).onChange(async (v) => {
+					this.plugin.settings.imagePrefix = v;
+					await this.plugin.saveSettings();
+					this._debouncedRescan();
+				})
+			)
+			.addExtraButton((btn) =>
+				btn.setIcon("reset").setTooltip("Reset to default (\"/\")").onClick(async () => {
+					this.plugin.settings.imagePrefix = DEFAULT_SETTINGS.imagePrefix;
+					await this.plugin.saveSettings();
+					this._debouncedRescan();
+					this.display();
+				})
+			);
 
-    new Setting(containerEl)
-      .setName("Tags shown per card")
-      .setDesc("Maximum number of tags displayed on each card")
-      .addSlider((slider) =>
-        slider.setLimits(1, 10, 1).setValue(this.plugin.settings.maxTagsPerCard)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.maxTagsPerCard = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		// Required archive fields — tag/chip editor
+		containerEl.createEl("h3", { text: "Required archive fields", cls: "cms-section-subheading" });
+		containerEl.createEl("p", {
+			text: "These frontmatter fields must be present in every archive post. If a field is missing or empty, the validator will flag it as an error.",
+			cls: "cms-settings-hint",
+		});
 
-    new Setting(containerEl)
-      .setName("Errors shown per card")
-      .setDesc("Maximum number of validation errors displayed on each card")
-      .addSlider((slider) =>
-        slider.setLimits(1, 10, 1).setValue(this.plugin.settings.maxErrorsPerCard)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.maxErrorsPerCard = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		const reqChipRow = containerEl.createEl("div", { cls: "cms-chip-row" });
+		for (const field of this.plugin.settings.requiredArchiveFields) {
+			const chip = reqChipRow.createEl("span", { cls: "cms-chip" });
+			chip.createSpan({ text: field, cls: "cms-chip-text" });
+			const removeBtn = chip.createEl("button", { cls: "cms-chip-remove", attr: { "aria-label": `Remove ${field}` } });
+			removeBtn.setText("\u00D7");
+			removeBtn.addEventListener("click", async () => {
+				this.plugin.settings.requiredArchiveFields = this.plugin.settings.requiredArchiveFields.filter((f) => f !== field);
+				await this.plugin.saveSettings();
+				this._debouncedRescan();
+				this.display();
+			});
+		}
 
-    new Setting(containerEl)
-      .setName("Tags in meta section")
-      .setDesc("Maximum number of unique tags shown in the Tags section at the bottom")
-      .addSlider((slider) =>
-        slider.setLimits(10, 100, 5).setValue(this.plugin.settings.maxMetaTags)
-          .setDynamicTooltip().onChange(async (v) => {
-            this.plugin.settings.maxMetaTags = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		const addFieldSetting = new Setting(containerEl)
+			.setName("Add a required field");
+		addFieldSetting.addText((text) => {
+			text.setPlaceholder("e.g. series, track, era");
+			text.inputEl.classList.add("cms-add-field-input");
+			text.onChange(() => { /* track input */ });
+		});
+		addFieldSetting.addButton((btn) => {
+			btn.setButtonText("Add").setCta();
+			btn.onClick(async () => {
+				const input = containerEl.querySelector(".cms-add-field-input") as HTMLInputElement | null;
+				const value = input?.value?.trim().toLowerCase();
+				if (!value) {
+					new Notice("Please type a field name first.");
+					return;
+				}
+				if (this.plugin.settings.requiredArchiveFields.includes(value)) {
+					new Notice(`Field "${value}" is already required.`);
+					return;
+				}
+				this.plugin.settings.requiredArchiveFields.push(value);
+				await this.plugin.saveSettings();
+				this._debouncedRescan();
+				this.display();
+				new Notice(`Added required field: ${value}`);
+			});
+		});
 
-    // ─── New Post Template ───
-    containerEl.createEl("h2", { text: "New Post Template" });
-    containerEl.createEl("p", {
-      text: "Customize how new posts are created. Use variables like {{seriesOrder}}, {{date}}, etc. in the format fields.",
-      cls: "cms-settings-hint",
-    });
+		new Setting(containerEl)
+			.setName("Reset required fields to default")
+			.setDesc(`Restore: ${DEFAULT_SETTINGS.requiredArchiveFields.join(", ")}`)
+			.addButton((btn) =>
+				btn.setButtonText("Reset").setWarning().onClick(async () => {
+					this.plugin.settings.requiredArchiveFields = [...DEFAULT_SETTINGS.requiredArchiveFields];
+					await this.plugin.saveSettings();
+					this._debouncedRescan();
+					this.display();
+				})
+			);
 
-    // Variable reference
-    const varList = containerEl.createEl("div", { cls: "cms-template-vars" });
-    varList.createEl("strong", { text: "Available variables:" });
-    const varUl = varList.createEl("ul");
-    for (const v of TEMPLATE_VARIABLES) {
-      varUl.createEl("li", { text: `{{${v.name}}} — ${v.description}` });
-    }
+		// ═══════════════════════════════════════════════════════════
+		//  CARD DISPLAY — number inputs with context
+		// ═══════════════════════════════════════════════════════════
+		containerEl.createEl("h2", { text: "Card Display" });
+		containerEl.createEl("p", {
+			text: "Control how much information is shown on each card in the dashboard. Higher values show more detail but make the page longer.",
+			cls: "cms-settings-hint",
+		});
 
-    new Setting(containerEl)
-      .setName("Default series")
-      .setDesc("Series name applied to new posts (e.g. minds-and-machines)")
-      .addText((text) =>
-        text.setPlaceholder("minds-and-machines")
-          .setValue(this.plugin.settings.defaultSeries || "")
-          .onChange(async (v) => {
-            this.plugin.settings.defaultSeries = v.trim();
-            await this.plugin.saveSettings();
-          })
-      );
+		this._addNumberInput(containerEl, {
+			name: "Cards per page",
+			desc: "How many cards to show before the \"Load More\" button appears. Lower values load faster.",
+			value: this.plugin.settings.cardsPerPage,
+			unit: "cards",
+			min: 5,
+			max: 200,
+			step: 5,
+			defaultValue: DEFAULT_SETTINGS.cardsPerPage,
+			onChange: (v) => { this.plugin.settings.cardsPerPage = v; },
+		});
 
-    new Setting(containerEl)
-      .setName("Slug format")
-      .setDesc("File name pattern for new posts (e.g. {{seriesOrder}}-untitled-post)")
-      .addText((text) =>
-        text.setPlaceholder("{{seriesOrder}}-untitled-post")
-          .setValue(this.plugin.settings.newPostSlug)
-          .onChange(async (v) => {
-            this.plugin.settings.newPostSlug = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		this._addNumberInput(containerEl, {
+			name: "Description preview length",
+			desc: "How many characters of the description to show on each card before truncating with \"...\".",
+			value: this.plugin.settings.descriptionTruncation,
+			unit: "chars",
+			min: 20,
+			max: 500,
+			step: 10,
+			defaultValue: DEFAULT_SETTINGS.descriptionTruncation,
+			onChange: (v) => { this.plugin.settings.descriptionTruncation = v; },
+		});
 
-    new Setting(containerEl)
-      .setName("Title format")
-      .setDesc("Default title for new posts (e.g. Untitled {{trackName}} Post)")
-      .addText((text) =>
-        text.setPlaceholder("Untitled {{trackName}} Post")
-          .setValue(this.plugin.settings.newPostTitle)
-          .onChange(async (v) => {
-            this.plugin.settings.newPostTitle = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		this._addNumberInput(containerEl, {
+			name: "Figures preview length",
+			desc: "How many characters of the figures field to show on each card.",
+			value: this.plugin.settings.figuresTruncation,
+			unit: "chars",
+			min: 10,
+			max: 200,
+			step: 5,
+			defaultValue: DEFAULT_SETTINGS.figuresTruncation,
+			onChange: (v) => { this.plugin.settings.figuresTruncation = v; },
+		});
 
-    new Setting(containerEl)
-      .setName("Image path format")
-      .setDesc("Hero image path pattern (e.g. /images/{{seriesOrderLower}}-hero.jpg)")
-      .addText((text) =>
-        text.setPlaceholder("/images/{{seriesOrderLower}}-hero.jpg")
-          .setValue(this.plugin.settings.newPostImage)
-          .onChange(async (v) => {
-            this.plugin.settings.newPostImage = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		this._addNumberInput(containerEl, {
+			name: "Tags shown per card",
+			desc: "Maximum number of tags displayed on each card. Extra tags show as \"+3 more\".",
+			value: this.plugin.settings.maxTagsPerCard,
+			unit: "tags",
+			min: 1,
+			max: 20,
+			step: 1,
+			defaultValue: DEFAULT_SETTINGS.maxTagsPerCard,
+			onChange: (v) => { this.plugin.settings.maxTagsPerCard = v; },
+		});
 
-    new Setting(containerEl)
-      .setName("Default status for new posts")
-      .setDesc("What status to set on newly created posts")
-      .addDropdown((dd) => {
-        for (const s of this.plugin.settings.statuses) {
-          dd.addOption(s, s);
-        }
-        dd.setValue(this.plugin.settings.newPostStatus || this.plugin.settings.statuses[0] || "planned");
-        dd.onChange(async (v) => {
-          this.plugin.settings.newPostStatus = v;
-          await this.plugin.saveSettings();
-        });
-      });
+		this._addNumberInput(containerEl, {
+			name: "Errors shown per card",
+			desc: "Maximum number of validation errors displayed on each card. Extra errors show as \"+2 more\".",
+			value: this.plugin.settings.maxErrorsPerCard,
+			unit: "errors",
+			min: 1,
+			max: 20,
+			step: 1,
+			defaultValue: DEFAULT_SETTINGS.maxErrorsPerCard,
+			onChange: (v) => { this.plugin.settings.maxErrorsPerCard = v; },
+		});
 
-    new Setting(containerEl)
-      .setName("Body template")
-      .setDesc("Default content for the body of new posts")
-      .addTextArea((text) =>
-        text.setPlaceholder("Start writing here...")
-          .setValue(this.plugin.settings.newPostBody)
-          .onChange(async (v) => {
-            this.plugin.settings.newPostBody = v;
-            await this.plugin.saveSettings();
-          })
-      );
+		this._addNumberInput(containerEl, {
+			name: "Tags in meta section",
+			desc: "Maximum number of unique tags shown in the \"Tags\" section at the bottom of the dashboard.",
+			value: this.plugin.settings.maxMetaTags,
+			unit: "tags",
+			min: 5,
+			max: 200,
+			step: 5,
+			defaultValue: DEFAULT_SETTINGS.maxMetaTags,
+			onChange: (v) => { this.plugin.settings.maxMetaTags = v; },
+		});
 
-    // ─── Pre-flight Settings ───
-    containerEl.createEl("h2", { text: "Pre-flight Settings" });
-    containerEl.createEl("p", {
-      text: "Pre-flight prepares a draft for publishing. Configure what happens when you pre-flight a post.",
-      cls: "cms-settings-hint",
-    });
+		// ═══════════════════════════════════════════════════════════
+		//  NEW POST TEMPLATE — with variable insert buttons
+		// ═══════════════════════════════════════════════════════════
+		containerEl.createEl("h2", { text: "New Post Template" });
+		containerEl.createEl("p", {
+			text: "Customize how new posts are created. Click the variable buttons below each field to insert placeholders that get filled in automatically when you create a new post.",
+			cls: "cms-settings-hint",
+		});
 
-    new Setting(containerEl)
-      .setName("Set draft to")
-      .setDesc("What the draft field should be set to when pre-flighting")
-      .addDropdown((dd) => {
-        dd.addOption("false", "false (published)");
-        dd.addOption("true", "true (still draft)");
-        dd.setValue(String(this.plugin.settings.preflightDraft));
-        dd.onChange(async (v) => {
-          this.plugin.settings.preflightDraft = v === "true";
-          await this.plugin.saveSettings();
-        });
-      });
+		// Variable reference card
+		const varCard = containerEl.createEl("div", { cls: "cms-template-vars-card" });
+		varCard.createEl("strong", { text: "Available Variables" });
+		const varGrid = varCard.createEl("div", { cls: "cms-template-vars-grid" });
+		for (const v of TEMPLATE_VARIABLES) {
+			const varItem = varGrid.createEl("div", { cls: "cms-template-var-item" });
+			varItem.createEl("code", { text: `{{${v.name}}}` });
+			varItem.createEl("span", { text: v.description, cls: "cms-template-var-desc" });
+		}
 
-    new Setting(containerEl)
-      .setName("Set status to")
-      .setDesc("What the status field should be set to when pre-flighting")
-      .addDropdown((dd) => {
-        for (const s of this.plugin.settings.statuses) {
-          dd.addOption(s, s);
-        }
-        dd.setValue(this.plugin.settings.preflightStatus || "published");
-        dd.onChange(async (v) => {
-          this.plugin.settings.preflightStatus = v;
-          await this.plugin.saveSettings();
-        });
-      });
+		// Default series
+		new Setting(containerEl)
+			.setName("Default series")
+			.setDesc("Series name applied to all new posts (e.g. minds-and-machines)")
+			.addText((text) =>
+				text.setPlaceholder("minds-and-machines")
+					.setValue(this.plugin.settings.defaultSeries || "")
+					.onChange(async (v) => {
+						this.plugin.settings.defaultSeries = v.trim();
+						await this.plugin.saveSettings();
+					})
+			)
+			.addExtraButton((btn) =>
+				btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+					this.plugin.settings.defaultSeries = DEFAULT_SETTINGS.defaultSeries;
+					await this.plugin.saveSettings();
+					this.display();
+				})
+			);
 
-    new Setting(containerEl)
-      .setName("Auto-fill today's date")
-      .setDesc("If the post has no date, fill it with today's date when pre-flighting")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.preflightAutoDate).onChange(async (v) => {
-          this.plugin.settings.preflightAutoDate = v;
-          await this.plugin.saveSettings();
-        })
-      );
+		// Slug format with variable buttons
+		const slugSetting = new Setting(containerEl)
+			.setName("Slug format")
+			.setDesc("File name pattern for new posts. This becomes the .md file name.");
+		slugSetting.addText((text) => {
+			text.inputEl.classList.add("cms-template-input");
+			text.setPlaceholder("{{seriesOrder}}-untitled-post")
+				.setValue(this.plugin.settings.newPostSlug)
+				.onChange(async (v) => {
+					this.plugin.settings.newPostSlug = v;
+					await this.plugin.saveSettings();
+				});
+		});
+		slugSetting.addExtraButton((btn) =>
+			btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+				this.plugin.settings.newPostSlug = DEFAULT_SETTINGS.newPostSlug;
+				await this.plugin.saveSettings();
+				this.display();
+			})
+		);
+		this._addVariableButtons(containerEl, "cms-template-input", ["seriesOrder", "seriesOrderLower", "track"]);
 
-    // ─── Appearance ───
-    containerEl.createEl("h2", { text: "Appearance" });
+		// Title format with variable buttons
+		const titleSetting = new Setting(containerEl)
+			.setName("Title format")
+			.setDesc("Default title for new posts");
+		titleSetting.addText((text) => {
+			text.inputEl.classList.add("cms-template-input-title");
+			text.setPlaceholder("Untitled {{trackName}} Post")
+				.setValue(this.plugin.settings.newPostTitle)
+				.onChange(async (v) => {
+					this.plugin.settings.newPostTitle = v;
+					await this.plugin.saveSettings();
+				});
+		});
+		titleSetting.addExtraButton((btn) =>
+			btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+				this.plugin.settings.newPostTitle = DEFAULT_SETTINGS.newPostTitle;
+				await this.plugin.saveSettings();
+				this.display();
+			})
+		);
+		this._addVariableButtons(containerEl, "cms-template-input-title", ["trackName", "seriesOrder", "series"]);
 
-    new Setting(containerEl)
-      .setName("Show ribbon icon")
-      .setDesc("Show the isHistory icon in the left sidebar ribbon")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showRibbonIcon).onChange(async (v) => {
-          this.plugin.settings.showRibbonIcon = v;
-          await this.plugin.saveSettings();
-          this.plugin.updateRibbonIcon();
-        })
-      );
+		// Image path format with variable buttons
+		const imageSetting = new Setting(containerEl)
+			.setName("Image path format")
+			.setDesc("Hero image path pattern for new posts");
+		imageSetting.addText((text) => {
+			text.inputEl.classList.add("cms-template-input-image");
+			text.setPlaceholder("/images/{{seriesOrderLower}}-hero.jpg")
+				.setValue(this.plugin.settings.newPostImage)
+				.onChange(async (v) => {
+					this.plugin.settings.newPostImage = v;
+					await this.plugin.saveSettings();
+				});
+		});
+		imageSetting.addExtraButton((btn) =>
+			btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+				this.plugin.settings.newPostImage = DEFAULT_SETTINGS.newPostImage;
+				await this.plugin.saveSettings();
+				this.display();
+			})
+		);
+		this._addVariableButtons(containerEl, "cms-template-input-image", ["seriesOrderLower", "seriesOrder", "track"]);
 
-    // ─── Deploy Hint ───
-    containerEl.createEl("h2", { text: "Deploying to Your Site" });
-    new Setting(containerEl)
-      .setName("Git sync required")
-      .setDesc("This plugin manages frontmatter and validation. To deploy changes to your Astro site, use Obsidian Git or your preferred Git sync method.")
-      .addButton((btn) =>
-        btn.setButtonText("Open Obsidian Git").setCta().onClick(() => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const appAny = this.app as any;
-          const gitPlugin = appAny.plugins?.plugins?.["obsidian-git"];
-          if (gitPlugin) {
-            appAny.setting?.open();
-            appAny.setting?.openTabById("obsidian-git");
-          } else {
-            window.open("https://github.com/Vinzent03/obsidian-git", "_blank");
-          }
-        })
-      );
+		// Default status — dropdown from defined statuses
+		new Setting(containerEl)
+			.setName("Default status for new posts")
+			.setDesc("What publication status to set on newly created posts")
+			.addDropdown((dd) => {
+				for (const s of this.plugin.settings.statuses) {
+					dd.addOption(s, s);
+				}
+				dd.setValue(this.plugin.settings.newPostStatus || this.plugin.settings.statuses[0] || "planned");
+				dd.onChange(async (v) => {
+					this.plugin.settings.newPostStatus = v;
+					await this.plugin.saveSettings();
+				});
+			});
 
-    // Version footer
-    const versionEl = containerEl.createEl("div", { cls: "cms-settings-version" });
-    versionEl.createEl("span", { text: `isHistory CMS v${this.plugin.manifest.version}` });
-    versionEl.appendText(` \u00B7 Schema v${this.plugin.settings._version}`);
-  }
+		// Body template with variable buttons
+		const bodySetting = new Setting(containerEl)
+			.setName("Body template")
+			.setDesc("Default content for the body of new posts. This appears below the frontmatter.");
+		bodySetting.addTextArea((text) => {
+			text.inputEl.classList.add("cms-template-textarea");
+			text.setPlaceholder("Start writing here...")
+				.setValue(this.plugin.settings.newPostBody)
+				.onChange(async (v) => {
+					this.plugin.settings.newPostBody = v;
+					await this.plugin.saveSettings();
+				});
+			text.inputEl.rows = 4;
+		});
+		bodySetting.addExtraButton((btn) =>
+			btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+				this.plugin.settings.newPostBody = DEFAULT_SETTINGS.newPostBody;
+				await this.plugin.saveSettings();
+				this.display();
+			})
+		);
+		this._addVariableButtons(containerEl, "cms-template-textarea", ["seriesOrder", "trackName", "date", "series"]);
+
+		// ═══════════════════════════════════════════════════════════
+		//  PRE-FLIGHT SETTINGS — toggles and dropdowns
+		// ═══════════════════════════════════════════════════════════
+		containerEl.createEl("h2", { text: "Pre-flight Settings" });
+		containerEl.createEl("p", {
+			text: "Pre-flight prepares a draft for publishing. When you click \"Pre-flight\" on a post, these settings determine what changes are made to the frontmatter.",
+			cls: "cms-settings-hint",
+		});
+
+		new Setting(containerEl)
+			.setName("Set draft flag to")
+			.setDesc("What the draft field should be set to when pre-flighting. Choose \"false (publish)\" to mark the post as ready for publication.")
+			.addDropdown((dd) => {
+				dd.addOption("false", "false \u2014 publish the post");
+				dd.addOption("true", "true \u2014 keep as draft");
+				dd.setValue(String(this.plugin.settings.preflightDraft));
+				dd.onChange(async (v) => {
+					this.plugin.settings.preflightDraft = v === "true";
+					await this.plugin.saveSettings();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Set status to")
+			.setDesc("What the status field should be set to when pre-flighting")
+			.addDropdown((dd) => {
+				for (const s of this.plugin.settings.statuses) {
+					dd.addOption(s, s);
+				}
+				dd.setValue(this.plugin.settings.preflightStatus || "published");
+				dd.onChange(async (v) => {
+					this.plugin.settings.preflightStatus = v;
+					await this.plugin.saveSettings();
+				});
+			});
+
+		new Setting(containerEl)
+			.setName("Auto-fill today's date")
+			.setDesc("If the post has no date set, automatically fill it with today's date when pre-flighting")
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.preflightAutoDate).onChange(async (v) => {
+					this.plugin.settings.preflightAutoDate = v;
+					await this.plugin.saveSettings();
+				})
+			);
+
+		// Reset pre-flight
+		new Setting(containerEl)
+			.setName("Reset pre-flight to default")
+			.setDesc("Restore: draft=false, status=published, auto-fill date=true")
+			.addButton((btn) =>
+				btn.setButtonText("Reset").setWarning().onClick(async () => {
+					this.plugin.settings.preflightDraft = DEFAULT_SETTINGS.preflightDraft;
+					this.plugin.settings.preflightStatus = DEFAULT_SETTINGS.preflightStatus;
+					this.plugin.settings.preflightAutoDate = DEFAULT_SETTINGS.preflightAutoDate;
+					await this.plugin.saveSettings();
+					this.display();
+				})
+			);
+
+		// ═══════════════════════════════════════════════════════════
+		//  APPEARANCE
+		// ═══════════════════════════════════════════════════════════
+		containerEl.createEl("h2", { text: "Appearance" });
+
+		new Setting(containerEl)
+			.setName("Show ribbon icon")
+			.setDesc("Show the isHistory icon in the left sidebar ribbon for quick access")
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.showRibbonIcon).onChange(async (v) => {
+					this.plugin.settings.showRibbonIcon = v;
+					await this.plugin.saveSettings();
+					this.plugin.updateRibbonIcon();
+				})
+			);
+
+		// ═══════════════════════════════════════════════════════════
+		//  DEPLOY HINT
+		// ═══════════════════════════════════════════════════════════
+		containerEl.createEl("h2", { text: "Deploying to Your Site" });
+		new Setting(containerEl)
+			.setName("Git sync required")
+			.setDesc("This plugin manages frontmatter and validation. To deploy changes to your Astro site, use Obsidian Git or your preferred Git sync method.")
+			.addButton((btn) =>
+				btn.setButtonText("Open Obsidian Git").setCta().onClick(() => {
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					const appAny = this.app as any;
+					const gitPlugin = appAny.plugins?.plugins?.["obsidian-git"];
+					if (gitPlugin) {
+						appAny.setting?.open();
+						appAny.setting?.openTabById("obsidian-git");
+					} else {
+						window.open("https://github.com/Vinzent03/obsidian-git", "_blank");
+					}
+				})
+			);
+
+		// Version footer
+		const versionEl = containerEl.createEl("div", { cls: "cms-settings-version" });
+		versionEl.createEl("span", { text: `isHistory CMS v${this.plugin.manifest.version}` });
+		versionEl.appendText(` \u00B7 Schema v${this.plugin.settings._version}`);
+	}
+
+	/** Add clickable variable insert buttons below a template input */
+	private _addVariableButtons(
+		containerEl: HTMLElement,
+		inputClass: string,
+		varNames: string[],
+	): void {
+		const btnRow = containerEl.createEl("div", { cls: "cms-var-btn-row" });
+		btnRow.createEl("span", { text: "Insert:", cls: "cms-var-btn-label" });
+		for (const name of varNames) {
+			const btn = btnRow.createEl("button", {
+				text: `{{${name}}}`,
+				cls: "cms-var-btn",
+				attr: { "data-var": name },
+			});
+			btn.addEventListener("click", () => {
+				const input = containerEl.querySelector(`.${inputClass}`) as HTMLInputElement | HTMLTextAreaElement | null;
+				if (!input) return;
+				const start = input.selectionStart ?? input.value.length;
+				const end = input.selectionEnd ?? input.value.length;
+				const insertion = `{{${name}}}`;
+				const newValue = input.value.substring(0, start) + insertion + input.value.substring(end);
+				input.value = newValue;
+				// Set cursor position after insertion
+				const newPos = start + insertion.length;
+				input.setSelectionRange(newPos, newPos);
+				// Trigger the onChange
+				input.dispatchEvent(new Event("input", { bubbles: true }));
+			});
+		}
+	}
 }
 
 // ─── Track Editor Modal ───
 
 class TrackEditorModal extends Modal {
-  private plugin: IsHistoryPlugin;
-  private editCode: string | null;
-  private editInfo: TrackInfo | null;
-  private onSave: () => void;
+	private plugin: IsHistoryPlugin;
+	private editCode: string | null;
+	private editInfo: TrackInfo | null;
+	private onSave: () => void;
 
-  constructor(
-    app: App,
-    plugin: IsHistoryPlugin,
-    code: string | null,
-    info: TrackInfo | null,
-    onSave: () => void,
-  ) {
-    super(app);
-    this.plugin = plugin;
-    this.editCode = code;
-    this.editInfo = info;
-    this.onSave = onSave;
-  }
+	constructor(
+		app: App,
+		plugin: IsHistoryPlugin,
+		code: string | null,
+		info: TrackInfo | null,
+		onSave: () => void,
+	) {
+		super(app);
+		this.plugin = plugin;
+		this.editCode = code;
+		this.editInfo = info;
+		this.onSave = onSave;
+	}
 
-  onOpen(): void {
-    const { titleEl, contentEl } = this;
-    titleEl.setText(this.editCode ? `Edit Track: ${this.editCode}` : "Add New Track");
+	onOpen(): void {
+		const { titleEl, contentEl } = this;
+		titleEl.setText(this.editCode ? `Edit Track: ${this.editCode}` : "Add New Track");
 
-    const form = contentEl.createEl("div", { cls: "cms-track-editor" });
+		const form = contentEl.createEl("div", { cls: "cms-track-editor" });
 
-    // Code input
-    const codeSetting = form.createEl("div", { cls: "cms-form-field" });
-    codeSetting.createEl("label", { text: "Track code (1-2 letters, used in seriesOrder like A1, P3):" });
-    const codeInput = codeSetting.createEl("input", {
-      type: "text", cls: "cms-form-input",
-    });
-    codeInput.value = this.editCode || "";
-    codeInput.placeholder = "e.g. A, R, T";
-    codeInput.maxLength = 2;
-    if (this.editCode) codeInput.disabled = true; // Can't change code of existing track
+		// Code input
+		const codeSetting = form.createEl("div", { cls: "cms-form-field" });
+		codeSetting.createEl("label", { text: "Track code" });
+		codeSetting.createEl("p", { text: "1-2 uppercase letters used in seriesOrder (e.g. A1, P3, E14). This cannot be changed after creation.", cls: "cms-form-hint" });
+		const codeInput = codeSetting.createEl("input", {
+			type: "text", cls: "cms-form-input",
+		});
+		codeInput.value = this.editCode || "";
+		codeInput.placeholder = "e.g. A, R, T";
+		codeInput.maxLength = 2;
+		if (this.editCode) codeInput.disabled = true;
 
-    // Name input
-    const nameSetting = form.createEl("div", { cls: "cms-form-field" });
-    nameSetting.createEl("label", { text: "Display name:" });
-    const nameInput = nameSetting.createEl("input", {
-      type: "text", cls: "cms-form-input",
-    });
-    nameInput.value = this.editInfo?.name || "";
-    nameInput.placeholder = "e.g. Articles, Reviews";
+		// Name input
+		const nameSetting = form.createEl("div", { cls: "cms-form-field" });
+		nameSetting.createEl("label", { text: "Display name" });
+		nameSetting.createEl("p", { text: "The human-readable name shown in the dashboard and filters (e.g. \"Articles\", \"Photography\").", cls: "cms-form-hint" });
+		const nameInput = nameSetting.createEl("input", {
+			type: "text", cls: "cms-form-input",
+		});
+		nameInput.value = this.editInfo?.name || "";
+		nameInput.placeholder = "e.g. Articles, Reviews, Tutorials";
 
-    // Emoji input
-    const emojiSetting = form.createEl("div", { cls: "cms-form-field" });
-    emojiSetting.createEl("label", { text: "Emoji (copy from emojipedia.org):" });
-    const emojiInput = emojiSetting.createEl("input", {
-      type: "text", cls: "cms-form-input cms-form-input-emoji",
-    });
-    emojiInput.value = this.editInfo?.emoji || "";
-    emojiInput.placeholder = "\u{1F4F0}";
+		// Emoji input
+		const emojiSetting = form.createEl("div", { cls: "cms-form-field" });
+		emojiSetting.createEl("label", { text: "Emoji" });
+		emojiSetting.createEl("p", { text: "An emoji that represents this track. You can copy one from emojipedia.org.", cls: "cms-form-hint" });
+		const emojiInput = emojiSetting.createEl("input", {
+			type: "text", cls: "cms-form-input cms-form-input-emoji",
+		});
+		emojiInput.value = this.editInfo?.emoji || "";
+		emojiInput.placeholder = "\u{1F4F0}";
 
-    // Color input
-    const colorSetting = form.createEl("div", { cls: "cms-form-field" });
-    colorSetting.createEl("label", { text: "Color (hex, e.g. #7c3aed):" });
-    const colorRow = colorSetting.createEl("div", { cls: "cms-color-input-row" });
-    const colorInput = colorRow.createEl("input", {
-      type: "text", cls: "cms-form-input cms-form-input-color",
-    });
-    colorInput.value = this.editInfo?.color || "#7c3aed";
-    const colorPreview = colorRow.createEl("div", { cls: "cms-color-preview" });
-    colorPreview.style.backgroundColor = colorInput.value;
-    colorInput.addEventListener("input", () => {
-      colorPreview.style.backgroundColor = colorInput.value;
-    });
-    // Native color picker
-    const colorPicker = colorRow.createEl("input", {
-      type: "color", cls: "cms-color-picker",
-    });
-    colorPicker.value = colorInput.value;
-    colorPicker.addEventListener("input", () => {
-      colorInput.value = colorPicker.value;
-      colorPreview.style.backgroundColor = colorPicker.value;
-    });
+		// Color input — with native color picker
+		const colorSetting = form.createEl("div", { cls: "cms-form-field" });
+		colorSetting.createEl("label", { text: "Color" });
+		colorSetting.createEl("p", { text: "The accent color for this track. Used for card borders, badges, and stats in the dashboard.", cls: "cms-form-hint" });
+		const colorRow = colorSetting.createEl("div", { cls: "cms-color-input-row" });
+		const colorPicker = colorRow.createEl("input", {
+			type: "color", cls: "cms-color-picker",
+		});
+		colorPicker.value = this.editInfo?.color || "#7c3aed";
+		const colorInput = colorRow.createEl("input", {
+			type: "text", cls: "cms-form-input cms-form-input-color",
+		});
+		colorInput.value = this.editInfo?.color || "#7c3aed";
+		colorInput.placeholder = "#7c3aed";
+		const colorPreview = colorRow.createEl("div", { cls: "cms-color-preview" });
+		colorPreview.style.backgroundColor = colorInput.value;
+		// Sync picker → text + preview
+		colorPicker.addEventListener("input", () => {
+			colorInput.value = colorPicker.value;
+			colorPreview.style.backgroundColor = colorPicker.value;
+		});
+		// Sync text → picker + preview
+		colorInput.addEventListener("input", () => {
+			if (/^#[0-9a-fA-F]{6}$/.test(colorInput.value)) {
+				colorPicker.value = colorInput.value;
+				colorPreview.style.backgroundColor = colorInput.value;
+			}
+		});
 
-    // Buttons
-    const btnRow = form.createEl("div", { cls: "cms-modal-btn-row" });
-    btnRow.createEl("button", { text: "Cancel", cls: "cms-btn cms-btn-secondary" })
-      .addEventListener("click", () => this.close());
-    btnRow.createEl("button", { text: "Save", cls: "cms-btn cms-btn-primary" })
-      .addEventListener("click", async () => {
-        const code = codeInput.value.trim().toUpperCase();
-        const name = nameInput.value.trim();
-        const emoji = emojiInput.value.trim() || "\u{1F4CB}";
-        const color = colorInput.value.trim() || "#7c3aed";
+		// Error display area
+		const errorArea = form.createEl("div", { cls: "cms-form-errors" });
 
-        if (!code || code.length === 0) {
-          // eslint-disable-next-line no-console
-          console.warn("Track code is required");
-          return;
-        }
-        if (!name) {
-          // eslint-disable-next-line no-console
-          console.warn("Track name is required");
-          return;
-        }
-        if (!this.editCode && code in this.plugin.settings.tracks) {
-          // eslint-disable-next-line no-console
-          console.warn(`Track code "${code}" already exists`);
-          return;
-        }
+		// Buttons
+		const btnRow = form.createEl("div", { cls: "cms-modal-btn-row" });
+		btnRow.createEl("button", { text: "Cancel", cls: "cms-btn cms-btn-secondary" })
+			.addEventListener("click", () => this.close());
+		btnRow.createEl("button", { text: "Save Track", cls: "cms-btn cms-btn-primary" })
+			.addEventListener("click", async () => {
+				const code = codeInput.value.trim().toUpperCase();
+				const name = nameInput.value.trim();
+				const emoji = emojiInput.value.trim() || "\u{1F4CB}";
+				const color = colorInput.value.trim() || "#7c3aed";
 
-        this.plugin.settings.tracks[code] = { name, emoji, color };
-        await this.plugin.saveSettings();
-        this.plugin._updateDynamicStyles();
-        this._debouncedRescan();
-        this.close();
-        this.onSave();
-      });
-  }
+				// Validate with user-visible feedback
+				const errors: string[] = [];
+				if (!code || code.length === 0) {
+					errors.push("Track code is required.");
+				}
+				if (code && !/^[A-Z]{1,2}$/.test(code)) {
+					errors.push("Track code must be 1-2 uppercase letters (A-Z).");
+				}
+				if (!name) {
+					errors.push("Display name is required.");
+				}
+				if (!this.editCode && code in this.plugin.settings.tracks) {
+					errors.push(`Track code "${code}" already exists. Choose a different code.`);
+				}
+				if (color && !/^#[0-9a-fA-F]{6}$/.test(color)) {
+					errors.push("Color must be a valid hex code (e.g. #7c3aed).");
+				}
 
-  private _debouncedRescan(delay = 600): void {
-    setTimeout(() => this.plugin.rescanCache(), delay);
-  }
+				if (errors.length > 0) {
+					errorArea.empty();
+					for (const err of errors) {
+						errorArea.createEl("div", { text: err, cls: "cms-form-error" });
+					}
+					return;
+				}
+
+				this.plugin.settings.tracks[code] = { name, emoji, color };
+				await this.plugin.saveSettings();
+				this.plugin._updateDynamicStyles();
+				this._debouncedRescan();
+				this.close();
+				this.onSave();
+				new Notice(`Track "${name}" (${code}) saved.`);
+			});
+	}
+
+	private _debouncedRescan(delay = 600): void {
+		setTimeout(() => this.plugin.rescanCache(), delay);
+	}
 }
 
 // ─── Settings Migration ───
 
 export function migrateSettings(loaded: Record<string, unknown>): Record<string, unknown> {
-  const version = (loaded._version as number) || 0;
+	const version = (loaded._version as number) || 0;
 
-  if (version < 5) {
-    loaded.archivePath = loaded.archivePath || DEFAULT_SETTINGS.archivePath;
-    loaded.vaultPath = loaded.vaultPath || DEFAULT_SETTINGS.vaultPath;
-    loaded.cardsPerPage =
-      loaded.cardsPerPage !== undefined && loaded.cardsPerPage !== null
-        ? loaded.cardsPerPage
-        : DEFAULT_SETTINGS.cardsPerPage;
-    loaded.showRibbonIcon =
-      loaded.showRibbonIcon !== undefined ? loaded.showRibbonIcon : true;
-    delete loaded.contentPath;
-    delete loaded.requiredFields;
-    delete loaded.validateDraft;
-    delete loaded.validateDate;
-    delete loaded.autoSyncGraph;
-  }
+	if (version < 5) {
+		loaded.archivePath = loaded.archivePath || DEFAULT_SETTINGS.archivePath;
+		loaded.vaultPath = loaded.vaultPath || DEFAULT_SETTINGS.vaultPath;
+		loaded.cardsPerPage =
+			loaded.cardsPerPage !== undefined && loaded.cardsPerPage !== null
+				? loaded.cardsPerPage
+				: DEFAULT_SETTINGS.cardsPerPage;
+		loaded.showRibbonIcon =
+			loaded.showRibbonIcon !== undefined ? loaded.showRibbonIcon : true;
+		delete loaded.contentPath;
+		delete loaded.requiredFields;
+		delete loaded.validateDraft;
+		delete loaded.validateDate;
+		delete loaded.autoSyncGraph;
+	}
 
-  if (version < 6) {
-    if (!loaded.cardsPerPage || typeof loaded.cardsPerPage !== "number") {
-      loaded.cardsPerPage = DEFAULT_SETTINGS.cardsPerPage;
-    }
-  }
+	if (version < 6) {
+		if (!loaded.cardsPerPage || typeof loaded.cardsPerPage !== "number") {
+			loaded.cardsPerPage = DEFAULT_SETTINGS.cardsPerPage;
+		}
+	}
 
-  if (version < 7) {
-    loaded.defaultSeries = loaded.defaultSeries || DEFAULT_SETTINGS.defaultSeries;
-  }
+	if (version < 7) {
+		loaded.defaultSeries = loaded.defaultSeries || DEFAULT_SETTINGS.defaultSeries;
+	}
 
-  // v1.5.0: Migrate from hardcoded tracks/statuses to dynamic settings
-  if (version < 8) {
-    // Initialize tracks from default if not present
-    if (!loaded.tracks || typeof loaded.tracks !== "object") {
-      loaded.tracks = { ...DEFAULT_TRACKS };
-    }
-    // Initialize statuses from default if not present
-    if (!Array.isArray(loaded.statuses)) {
-      loaded.statuses = [...DEFAULT_STATUSES];
-    }
-    // Validation thresholds
-    if (typeof loaded.minTitleLength !== "number") loaded.minTitleLength = DEFAULT_SETTINGS.minTitleLength;
-    if (typeof loaded.maxTitleLength !== "number") loaded.maxTitleLength = DEFAULT_SETTINGS.maxTitleLength;
-    if (typeof loaded.minDescriptionLength !== "number") loaded.minDescriptionLength = DEFAULT_SETTINGS.minDescriptionLength;
-    if (typeof loaded.maxDescriptionLength !== "number") loaded.maxDescriptionLength = DEFAULT_SETTINGS.maxDescriptionLength;
-    if (!Array.isArray(loaded.requiredArchiveFields)) loaded.requiredArchiveFields = [...DEFAULT_SETTINGS.requiredArchiveFields];
-    if (typeof loaded.imagePrefix !== "string") loaded.imagePrefix = DEFAULT_SETTINGS.imagePrefix;
-    // Display limits
-    if (typeof loaded.descriptionTruncation !== "number") loaded.descriptionTruncation = DEFAULT_SETTINGS.descriptionTruncation;
-    if (typeof loaded.figuresTruncation !== "number") loaded.figuresTruncation = DEFAULT_SETTINGS.figuresTruncation;
-    if (typeof loaded.maxTagsPerCard !== "number") loaded.maxTagsPerCard = DEFAULT_SETTINGS.maxTagsPerCard;
-    if (typeof loaded.maxErrorsPerCard !== "number") loaded.maxErrorsPerCard = DEFAULT_SETTINGS.maxErrorsPerCard;
-    if (typeof loaded.maxMetaTags !== "number") loaded.maxMetaTags = DEFAULT_SETTINGS.maxMetaTags;
-    // Template
-    if (typeof loaded.newPostSlug !== "string") loaded.newPostSlug = DEFAULT_SETTINGS.newPostSlug;
-    if (typeof loaded.newPostTitle !== "string") loaded.newPostTitle = DEFAULT_SETTINGS.newPostTitle;
-    if (typeof loaded.newPostImage !== "string") loaded.newPostImage = DEFAULT_SETTINGS.newPostImage;
-    if (typeof loaded.newPostStatus !== "string") loaded.newPostStatus = DEFAULT_SETTINGS.newPostStatus;
-    if (typeof loaded.newPostBody !== "string") loaded.newPostBody = DEFAULT_SETTINGS.newPostBody;
-    // Pre-flight
-    if (typeof loaded.preflightDraft !== "boolean") loaded.preflightDraft = DEFAULT_SETTINGS.preflightDraft;
-    if (typeof loaded.preflightStatus !== "string") loaded.preflightStatus = DEFAULT_SETTINGS.preflightStatus;
-    if (typeof loaded.preflightAutoDate !== "boolean") loaded.preflightAutoDate = DEFAULT_SETTINGS.preflightAutoDate;
-  }
+	// v1.5.0: Migrate from hardcoded tracks/statuses to dynamic settings
+	if (version < 8) {
+		// Initialize tracks from default if not present
+		if (!loaded.tracks || typeof loaded.tracks !== "object") {
+			loaded.tracks = { ...DEFAULT_TRACKS };
+		}
+		// Initialize statuses from default if not present
+		if (!Array.isArray(loaded.statuses)) {
+			loaded.statuses = [...DEFAULT_STATUSES];
+		}
+		// Validation thresholds
+		if (typeof loaded.minTitleLength !== "number") loaded.minTitleLength = DEFAULT_SETTINGS.minTitleLength;
+		if (typeof loaded.maxTitleLength !== "number") loaded.maxTitleLength = DEFAULT_SETTINGS.maxTitleLength;
+		if (typeof loaded.minDescriptionLength !== "number") loaded.minDescriptionLength = DEFAULT_SETTINGS.minDescriptionLength;
+		if (typeof loaded.maxDescriptionLength !== "number") loaded.maxDescriptionLength = DEFAULT_SETTINGS.maxDescriptionLength;
+		if (!Array.isArray(loaded.requiredArchiveFields)) loaded.requiredArchiveFields = [...DEFAULT_SETTINGS.requiredArchiveFields];
+		if (typeof loaded.imagePrefix !== "string") loaded.imagePrefix = DEFAULT_SETTINGS.imagePrefix;
+		// Display limits
+		if (typeof loaded.descriptionTruncation !== "number") loaded.descriptionTruncation = DEFAULT_SETTINGS.descriptionTruncation;
+		if (typeof loaded.figuresTruncation !== "number") loaded.figuresTruncation = DEFAULT_SETTINGS.figuresTruncation;
+		if (typeof loaded.maxTagsPerCard !== "number") loaded.maxTagsPerCard = DEFAULT_SETTINGS.maxTagsPerCard;
+		if (typeof loaded.maxErrorsPerCard !== "number") loaded.maxErrorsPerCard = DEFAULT_SETTINGS.maxErrorsPerCard;
+		if (typeof loaded.maxMetaTags !== "number") loaded.maxMetaTags = DEFAULT_SETTINGS.maxMetaTags;
+		// Template
+		if (typeof loaded.newPostSlug !== "string") loaded.newPostSlug = DEFAULT_SETTINGS.newPostSlug;
+		if (typeof loaded.newPostTitle !== "string") loaded.newPostTitle = DEFAULT_SETTINGS.newPostTitle;
+		if (typeof loaded.newPostImage !== "string") loaded.newPostImage = DEFAULT_SETTINGS.newPostImage;
+		if (typeof loaded.newPostStatus !== "string") loaded.newPostStatus = DEFAULT_SETTINGS.newPostStatus;
+		if (typeof loaded.newPostBody !== "string") loaded.newPostBody = DEFAULT_SETTINGS.newPostBody;
+		// Pre-flight
+		if (typeof loaded.preflightDraft !== "boolean") loaded.preflightDraft = DEFAULT_SETTINGS.preflightDraft;
+		if (typeof loaded.preflightStatus !== "string") loaded.preflightStatus = DEFAULT_SETTINGS.preflightStatus;
+		if (typeof loaded.preflightAutoDate !== "boolean") loaded.preflightAutoDate = DEFAULT_SETTINGS.preflightAutoDate;
+	}
 
-  loaded._version = SETTINGS_VERSION;
-  return loaded;
+	loaded._version = SETTINGS_VERSION;
+	return loaded;
 }

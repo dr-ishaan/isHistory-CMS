@@ -216,23 +216,129 @@
 .cms-sidebar-actions { margin-top: 16px; display: flex; flex-direction: column; gap: 6px; }
 
 /* ═════════════════════════════════════════════════════════════════════════
-   SETTINGS UI STYLES
+   SETTINGS UI STYLES — v1.5.0 Non-technical-user-friendly
    ═════════════════════════════════════════════════════════════════════════ */
-.cms-template-vars {
+
+/* ─── Number Input with Unit Label ─── */
+.cms-number-input {
+    width: 80px !important; text-align: center; font-size: 0.9em;
+    font-family: var(--font-monospace);
+    padding: 6px 8px; border-radius: 6px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary); color: var(--text-normal);
+}
+.cms-number-input:focus {
+    outline: none; border-color: var(--ish-track-a, #7c3aed);
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
+}
+.cms-input-unit {
+    font-size: 0.78em; color: var(--text-faint); margin-left: 6px;
+    white-space: nowrap;
+}
+
+/* ─── Tag/Chip Editor ─── */
+.cms-chip-row {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 16px; padding: 12px;
+    background: var(--background-secondary); border-radius: 8px;
+    border: 1px solid var(--background-modifier-border);
+    min-height: 44px;
+}
+.cms-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 10px; border-radius: 6px;
+    background: rgba(124, 58, 237, 0.1);
+    color: var(--ish-track-a, #7c3aed);
+    font-size: 0.82em; font-weight: 500;
+    border: 1px solid rgba(124, 58, 237, 0.2);
+    transition: all 0.15s ease;
+}
+.cms-chip:hover {
+    background: rgba(124, 58, 237, 0.18);
+}
+.cms-chip-text {
+    max-width: 150px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cms-chip-remove {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 50%;
+    border: none; background: transparent; color: var(--text-faint);
+    cursor: pointer; font-size: 1em; line-height: 1;
+    padding: 0; transition: all 0.15s ease;
+}
+.cms-chip-remove:hover {
+    background: rgba(239, 68, 68, 0.15); color: #ef4444;
+}
+
+/* ─── Template Variable Card ─── */
+.cms-template-vars-card {
     margin: 0 0 16px 0; padding: 12px 16px;
     background: var(--background-secondary); border-radius: 8px;
     border: 1px solid var(--background-modifier-border);
-    font-size: 0.85em; color: var(--text-muted);
 }
-.cms-template-vars strong { color: var(--text-normal); }
-.cms-template-vars ul { margin: 6px 0 0 0; padding-left: 20px; }
-.cms-template-vars li { margin-bottom: 2px; }
+.cms-template-vars-card strong {
+    color: var(--text-normal); font-size: 0.9em;
+}
+.cms-template-vars-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 6px; margin-top: 8px;
+}
+.cms-template-var-item {
+    display: flex; align-items: baseline; gap: 6px;
+    font-size: 0.82em;
+}
+.cms-template-var-item code {
+    background: rgba(124, 58, 237, 0.1); color: var(--ish-track-a, #7c3aed);
+    padding: 1px 6px; border-radius: 3px;
+    font-size: 0.88em; white-space: nowrap;
+}
+.cms-template-var-desc {
+    color: var(--text-faint); font-size: 0.88em;
+}
 
+/* ─── Variable Insert Buttons ─── */
+.cms-var-btn-row {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+    margin: -8px 0 16px 0; padding: 6px 0;
+}
+.cms-var-btn-label {
+    font-size: 0.78em; color: var(--text-faint); font-weight: 500;
+}
+.cms-var-btn {
+    padding: 2px 8px; border-radius: 4px; font-size: 0.75em;
+    font-family: var(--font-monospace);
+    background: rgba(124, 58, 237, 0.08); color: var(--ish-track-a, #7c3aed);
+    border: 1px solid rgba(124, 58, 237, 0.2);
+    cursor: pointer; transition: all 0.15s ease;
+}
+.cms-var-btn:hover {
+    background: rgba(124, 58, 237, 0.18);
+    border-color: rgba(124, 58, 237, 0.4);
+}
+
+/* ─── Template Textarea ─── */
+.cms-template-textarea {
+    font-family: var(--font-monospace) !important;
+    font-size: 0.85em !important;
+    min-height: 80px;
+}
+
+/* ─── Section Subheadings ─── */
+.cms-section-subheading {
+    font-size: 1em; color: var(--text-normal); margin: 16px 0 4px 0;
+}
+
+/* ─── Track Editor Modal ─── */
 .cms-track-editor { padding: 8px 0; }
 .cms-form-field { margin-bottom: 16px; }
 .cms-form-field label {
     display: block; margin-bottom: 6px; font-size: 0.9em;
     color: var(--text-normal); font-weight: 500;
+}
+.cms-form-hint {
+    margin: 0 0 6px 0; font-size: 0.82em; color: var(--text-faint);
+    line-height: 1.4;
 }
 .cms-form-input {
     width: 100%; padding: 8px 12px; border-radius: 6px;
@@ -240,7 +346,7 @@
     background: var(--background-primary); color: var(--text-normal);
     font-size: 0.9em;
 }
-.cms-form-input:focus { outline: none; border-color: var(--ish-track-a, #7c3aed); }
+.cms-form-input:focus { outline: none; border-color: var(--ish-track-a, #7c3aed); box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15); }
 .cms-form-input-emoji { width: 80px; text-align: center; font-size: 1.2em; }
 .cms-form-input-color { width: 120px; font-family: var(--font-monospace); }
 
@@ -252,4 +358,16 @@
 .cms-color-picker {
     width: 32px; height: 32px; border: none; padding: 0;
     cursor: pointer; background: none;
+}
+
+/* ─── Form Validation Errors ─── */
+.cms-form-errors {
+    margin-top: 12px;
+}
+.cms-form-error {
+    padding: 8px 12px; border-radius: 6px;
+    background: rgba(239, 68, 68, 0.1);
+    border-left: 3px solid #ef4444;
+    color: #ef4444; font-size: 0.85em;
+    margin-bottom: 6px;
 }
