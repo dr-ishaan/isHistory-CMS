@@ -9,7 +9,6 @@
 import { ItemView, type WorkspaceLeaf, Notice, Modal, TFile } from "obsidian";
 import {
   type ContentItem,
-  type TrackCode,
   type SortMode,
   DEFAULT_SETTINGS,
 } from "./types";
@@ -544,7 +543,7 @@ export class IsHistoryDashboardView extends ItemView {
         btn.addEventListener("click", () => {
           void (async () => {
             trackModal.close();
-            await this.plugin.newPost(code as TrackCode);
+            await this.plugin.newPost(code);
           })();
         });
       }

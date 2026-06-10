@@ -7,7 +7,7 @@
  * differential rendering, YAML shorthand tolerance, boundary-aware paths.
  */
 
-import { Plugin, Notice, Modal, TFile, type Menu } from "obsidian";
+import { Plugin, Notice, Modal, TFile, TAbstractFile, type Menu } from "obsidian";
 import {
   type IsHistorySettings,
   type TrackCode,
@@ -160,29 +160,26 @@ export default class IsHistoryPlugin extends Plugin {
   private _registerContextMenus(): void {
     // File explorer context menu
     this.registerEvent(
-      this.app.workspace.on("file-menu" as never, (menu: Menu, file) => {
-        // file is TAbstractFile — check if it has a path ending in .md
-        const abstractFile = file as unknown as { path?: string };
-        if (typeof abstractFile.path !== "string" || !abstractFile.path.endsWith(".md")) return;
-        if (!this.cache.isInCollection(abstractFile.path, this.settings)) return;
-        const tFile = file as unknown as TFile;
-        if (!(tFile instanceof TFile)) return;
+      this.app.workspace.on("file-menu" as never, (menu: Menu, file: TAbstractFile) => {
+        if (!(file instanceof TFile)) return;
+        if (!file.path.endsWith(".md")) return;
+        if (!this.cache.isInCollection(file.path, this.settings)) return;
         menu.addItem((item) => {
           item.setTitle("Validate with isHistory")
             .setIcon("checklist")
             .onClick(() => {
-              const result = this.validateFile(tFile);
+              const result = this.validateFile(file);
               new Notice(
                 result.errors.length === 0
-                  ? `${tFile.basename}: All fields valid!`
-                  : `${tFile.basename}: ${result.errors.filter((e) => e.severity === "error").length} error(s), ${result.errors.filter((e) => e.severity === "warning").length} warning(s)`
+                  ? `${file.basename}: All fields valid!`
+                  : `${file.basename}: ${result.errors.filter((e) => e.severity === "error").length} error(s), ${result.errors.filter((e) => e.severity === "warning").length} warning(s)`
               );
             });
         });
         menu.addItem((item) => {
           item.setTitle("Pre-flight with isHistory")
             .setIcon("upload-cloud")
-            .onClick(() => { void this.preflightFile(tFile); });
+            .onClick(() => { void this.preflightFile(file); });
         });
         menu.addItem((item) => {
           item.setTitle("Open in isHistory Dashboard")
@@ -306,7 +303,7 @@ export default class IsHistoryPlugin extends Plugin {
       this.settings._version = DEFAULT_SETTINGS._version;
       this.settings.archivePath = normalizePathSetting(this.settings.archivePath);
       this.settings.vaultPath = normalizePathSetting(this.settings.vaultPath);
-      if (loaded && ((loaded as Record<string, unknown>)._version as number || 0) < DEFAULT_SETTINGS._version) {
+      if (loaded && (Number(loaded._version) || 0) < DEFAULT_SETTINGS._version) {
         await this.saveData(this.settings);
       }
     } catch (e) {
