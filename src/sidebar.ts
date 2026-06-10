@@ -72,8 +72,8 @@ export class IsHistorySidebarView extends ItemView {
 
   private _debounceUpdate(): void {
     if (this._destroyed) return;
-    if (this._updateTimer) clearTimeout(this._updateTimer);
-    this._updateTimer = setTimeout(() => this.updateUI(), 400);
+    if (this._updateTimer) window.clearTimeout(this._updateTimer);
+    this._updateTimer = window.setTimeout(() => this.updateUI(), 400);
   }
 
   updateUI(): void {
@@ -147,11 +147,13 @@ export class IsHistorySidebarView extends ItemView {
       if (collection === "archive" && cached && cached.draft) {
         actions
           .createEl("button", { text: "Pre-flight this post", cls: "cms-btn cms-btn-primary cms-btn-full" })
-          .addEventListener("click", async () => {
-            try {
-              await this.plugin.preflightFile(activeFile);
-              this._debounceUpdate();
-            } catch (e) { new Notice(`Failed: ${(e as Error).message}`); }
+          .addEventListener("click", () => {
+            void (async () => {
+              try {
+                await this.plugin.preflightFile(activeFile);
+                this._debounceUpdate();
+              } catch (e) { new Notice(`Failed: ${(e as Error).message}`); }
+            })();
           });
       }
       actions
@@ -162,6 +164,6 @@ export class IsHistorySidebarView extends ItemView {
 
   async onClose() {
     this._destroyed = true;
-    if (this._updateTimer) clearTimeout(this._updateTimer);
+    if (this._updateTimer) window.clearTimeout(this._updateTimer);
   }
 }

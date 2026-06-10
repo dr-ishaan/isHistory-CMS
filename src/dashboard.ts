@@ -134,8 +134,8 @@ export class IsHistoryDashboardView extends ItemView {
 
   private _scheduleUpdate(): void {
     if (!this._ready) return;
-    if (this._updateTimer) clearTimeout(this._updateTimer);
-    this._updateTimer = setTimeout(() => this._processPending(), 500);
+    if (this._updateTimer) window.clearTimeout(this._updateTimer);
+    this._updateTimer = window.setTimeout(() => this._processPending(), 500);
   }
 
   private _processPending(): void {
@@ -162,8 +162,8 @@ export class IsHistoryDashboardView extends ItemView {
 
   requestRender(): void {
     if (this._destroyed) return;
-    if (this._renderTimer) clearTimeout(this._renderTimer);
-    this._renderTimer = setTimeout(() => {
+    if (this._renderTimer) window.clearTimeout(this._renderTimer);
+    this._renderTimer = window.setTimeout(() => {
       this._renderTimer = null;
       this.renderDashboard();
     }, 100);
@@ -218,8 +218,8 @@ export class IsHistoryDashboardView extends ItemView {
       // Feature 10: Search debounce (200ms)
       searchInput.addEventListener("input", () => {
         this.searchQuery = searchInput.value;
-        if (this._searchTimer) clearTimeout(this._searchTimer);
-        this._searchTimer = setTimeout(() => this.applyFilters(), 200);
+        if (this._searchTimer) window.clearTimeout(this._searchTimer);
+        this._searchTimer = window.setTimeout(() => this.applyFilters(), 200);
       });
 
       // Feature 7: Sort dropdown
@@ -403,7 +403,7 @@ export class IsHistoryDashboardView extends ItemView {
 
   private _buildCardDOM(item: ContentItem): HTMLElement {
     const settings = this.plugin.settings;
-    const card = document.createElement("div");
+    const card = activeDocument.createElement("div");
     card.className = `cms-card cms-card-${item.validation.status} cms-card-${item.collection}${item.track ? " cms-card-track-" + item.track : ""}`;
     card.setAttribute("data-path", item.path);
     card.setAttribute("data-collection", item.collection);
@@ -541,9 +541,11 @@ export class IsHistoryDashboardView extends ItemView {
           text: `${info.emoji} ${info.name} (${code})`,
           cls: "cms-btn cms-btn-track-btn",
         });
-        btn.addEventListener("click", async () => {
-          trackModal.close();
-          await this.plugin.newPost(code as TrackCode);
+        btn.addEventListener("click", () => {
+          void (async () => {
+            trackModal.close();
+            await this.plugin.newPost(code as TrackCode);
+          })();
         });
       }
       trackModal.open();
@@ -558,15 +560,23 @@ export class IsHistoryDashboardView extends ItemView {
       let visibleCount = 0;
       for (const [path, cardEl] of this._cardElements) {
         const item = this.plugin.cache.items.get(path);
-        if (!item) { cardEl.style.display = "none"; continue; }
+        if (!item) { cardEl.addClass("cms-hidden"); continue; }
         const matches = this.plugin.cache.matchesFilter(item, this.activeFilters, search);
         const beyondPage = matches && visibleCount >= this._visibleLimit;
         if (matches) visibleCount++;
-        cardEl.style.display = !matches || beyondPage ? "none" : "";
+        if (!matches || beyondPage) {
+          cardEl.addClass("cms-hidden");
+        } else {
+          cardEl.removeClass("cms-hidden");
+        }
       }
       this._totalVisible = visibleCount;
       if (this._loadMoreEl) {
-        this._loadMoreEl.style.display = this._totalVisible > this._visibleLimit ? "" : "none";
+        if (this._totalVisible > this._visibleLimit) {
+          this._loadMoreEl.removeClass("cms-hidden");
+        } else {
+          this._loadMoreEl.addClass("cms-hidden");
+        }
         const btn = this._loadMoreEl.querySelector("button");
         if (btn) btn.textContent = `Load More (${Math.max(0, this._totalVisible - this._visibleLimit)} remaining)`;
       }
@@ -618,9 +628,9 @@ export class IsHistoryDashboardView extends ItemView {
   async onClose() {
     this._destroyed = true;
     this._ready = false;
-    if (this._updateTimer) clearTimeout(this._updateTimer);
-    if (this._renderTimer) clearTimeout(this._renderTimer);
-    if (this._searchTimer) clearTimeout(this._searchTimer);
+    if (this._updateTimer) window.clearTimeout(this._updateTimer);
+    if (this._renderTimer) window.clearTimeout(this._renderTimer);
+    if (this._searchTimer) window.clearTimeout(this._searchTimer);
     this._cardElements.clear();
     this._pendingPaths.clear();
     this._itemSnapshots.clear();

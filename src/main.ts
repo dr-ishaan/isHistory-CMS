@@ -37,7 +37,6 @@ export default class IsHistoryPlugin extends Plugin {
   settings!: IsHistorySettings;
   cache!: ContentCache;
   private _ribbonIcon: HTMLElement | null = null;
-  private _dynamicStyleEl: HTMLElement | null = null;
   private _statusBarItem: HTMLElement | null = null;
 
   async onload() {
@@ -109,12 +108,11 @@ export default class IsHistoryPlugin extends Plugin {
     }
   }
 
-  async onunload() {
+  onunload() {
     try {
       this.app.workspace.detachLeavesOfType(VIEW_TYPE_DASHBOARD);
       this.app.workspace.detachLeavesOfType(VIEW_TYPE_SIDEBAR);
-      this._dynamicStyleEl?.remove();
-      this._dynamicStyleEl = null;
+      this._removeDynamicStyles();
       this._statusBarItem = null;
     } catch (e) {
       console.error("isHistory CMS: onunload error", e);
@@ -168,6 +166,7 @@ export default class IsHistoryPlugin extends Plugin {
         if (typeof abstractFile.path !== "string" || !abstractFile.path.endsWith(".md")) return;
         if (!this.cache.isInCollection(abstractFile.path, this.settings)) return;
         const tFile = file as unknown as TFile;
+        if (!(tFile instanceof TFile)) return;
         menu.addItem((item) => {
           item.setTitle("Validate with isHistory")
             .setIcon("checklist")
@@ -241,61 +240,78 @@ export default class IsHistoryPlugin extends Plugin {
   // ─── Dynamic CSS Injection ───
 
   _injectDynamicStyles(): void {
-    let el = document.getElementById("ishistory-dynamic-styles") as HTMLElement | null;
-    if (!el) {
-      el = document.createElement("style");
-      el.id = "ishistory-dynamic-styles";
-      document.head.appendChild(el);
-    }
-    this._dynamicStyleEl = el;
     this._updateDynamicStyles();
   }
 
-  _updateDynamicStyles(): void {
-    if (!this._dynamicStyleEl) return;
-    const rules: string[] = [];
-
-    rules.push(":root {");
-    for (const [code, info] of Object.entries(this.settings.tracks)) {
-      rules.push(`--ish-track-${code.toLowerCase()}: ${info.color};`);
+  _removeDynamicStyles(): void {
+    const root = activeDocument.documentElement;
+    // Remove all --ish-track-* and --ish-tag-* custom properties
+    const propsToRemove: string[] = [];
+    for (let i = 0; i < root.style.length; i++) {
+      const prop = root.style[i];
+      if (prop && prop.startsWith("--ish-track-") || prop?.startsWith("--ish-tag-")) {
+        propsToRemove.push(prop);
+      }
     }
-    rules.push("}");
+    for (const prop of propsToRemove) {
+      root.style.removeProperty(prop);
+    }
+  }
 
+  _updateDynamicStyles(): void {
+    const root = activeDocument.documentElement;
+
+    // Remove stale dynamic custom properties first
+    const propsToRemove: string[] = [];
+    for (let i = 0; i < root.style.length; i++) {
+      const prop = root.style[i];
+      if (prop && (prop.startsWith("--ish-track-") || prop.startsWith("--ish-tag-"))) {
+        propsToRemove.push(prop);
+      }
+    }
+    for (const prop of propsToRemove) {
+      root.style.removeProperty(prop);
+    }
+
+    // Set per-track CSS variables on :root
     for (const [code, info] of Object.entries(this.settings.tracks)) {
       const lc = code.toLowerCase();
-      rules.push(`.cms-card-code-${lc} { background: ${hexToRgba(info.color, 0.15)}; color: ${info.color}; }`);
-      rules.push(`.cms-card.cms-card-track-${code} { border-left-color: ${info.color}; }`);
-      rules.push(`.cms-stat-track-${lc} .cms-stat-value { color: ${info.color}; }`);
+      root.style.setProperty(`--ish-track-${lc}`, info.color);
+      root.style.setProperty(`--ish-track-${lc}-bg`, hexToRgba(info.color, 0.15));
+      root.style.setProperty(`--ish-track-${lc}-color`, info.color);
+      root.style.setProperty(`--ish-track-${lc}-border`, info.color);
+      root.style.setProperty(`--ish-track-${lc}-stat-color`, info.color);
     }
 
+    // Set primary color variables for tags/chips
     const primaryColor = Object.values(this.settings.tracks)[0]?.color || "#7c3aed";
-    rules.push(`.cms-card-tag { background: ${hexToRgba(primaryColor, 0.1)}; color: var(--ish-track-a, ${primaryColor}); }`);
-    rules.push(`.cms-tag-chip { background: ${hexToRgba(primaryColor, 0.08)}; color: var(--ish-track-a, ${primaryColor}); }`);
-
-    this._dynamicStyleEl.textContent = rules.join("\n");
+    root.style.setProperty("--ish-tag-bg", hexToRgba(primaryColor, 0.1));
+    root.style.setProperty("--ish-tag-color", primaryColor);
+    root.style.setProperty("--ish-tag-chip-bg", hexToRgba(primaryColor, 0.08));
+    root.style.setProperty("--ish-tag-chip-color", primaryColor);
   }
 
   // ─── Settings ───
 
   async loadSettings() {
     try {
-      const loaded = await this.loadData();
-      const migrated = migrateSettings(loaded || {});
+      const loaded = await this.loadData() as Record<string, unknown> | null;
+      const migrated = migrateSettings(loaded ?? {});
       // ─── Feature 5: Deep-merge instead of shallow assign ───
       // Start from defaults, then deep-merge migrated values on top
       this.settings = deepMerge(
         Object.assign({}, DEFAULT_SETTINGS) as unknown as Record<string, unknown>,
-        migrated as Record<string, unknown>,
+        migrated,
       ) as unknown as IsHistorySettings;
       this.settings._version = DEFAULT_SETTINGS._version;
       this.settings.archivePath = normalizePathSetting(this.settings.archivePath);
       this.settings.vaultPath = normalizePathSetting(this.settings.vaultPath);
-      if (loaded && (loaded._version || 0) < DEFAULT_SETTINGS._version) {
+      if (loaded && ((loaded as Record<string, unknown>)._version as number || 0) < DEFAULT_SETTINGS._version) {
         await this.saveData(this.settings);
       }
     } catch (e) {
       console.error("isHistory CMS: loadSettings failed", e);
-      this.settings = Object.assign({}, DEFAULT_SETTINGS) as IsHistorySettings;
+      this.settings = { ...DEFAULT_SETTINGS };
     }
   }
 
@@ -460,7 +476,7 @@ export default class IsHistoryPlugin extends Plugin {
         if (!confirmed) return;
       }
 
-      await this.app.fileManager.processFrontMatter(file, (fm) => {
+      await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
         fm.draft = this.settings.preflightDraft;
         fm.status = this.settings.preflightStatus;
         if (this.settings.preflightAutoDate && !fm.date) {

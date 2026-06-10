@@ -63,21 +63,21 @@ export class ContentCache {
       }
 
       // Derive track from seriesOrder if track field missing (dynamic regex)
-      let track: TrackCode | null = fm.track || null;
+      let track: TrackCode | null = typeof fm.track === "string" ? fm.track : null;
       const sRegex = seriesRegex || buildSeriesOrderRegex(settings.tracks);
       if (!track && fm.seriesOrder && typeof fm.seriesOrder === "string") {
         const m = fm.seriesOrder.match(sRegex);
-        if (m) track = m[1] as TrackCode;
+        if (m) track = String(m[1]);
       }
 
       // Normalize tags and aliases: YAML shorthand (bare string) → single-element array
       const tags = Array.isArray(fm.tags)
-        ? fm.tags as string[]
+        ? (fm.tags as string[]).map(String)
         : typeof fm.tags === "string"
           ? [fm.tags]
           : [];
       const aliases = Array.isArray(fm.aliases)
-        ? fm.aliases as string[]
+        ? (fm.aliases as string[]).map(String)
         : typeof fm.aliases === "string"
           ? [fm.aliases]
           : [];
@@ -87,23 +87,23 @@ export class ContentCache {
         path: file.path,
         collection,
         name: file.basename,
-        title: fm.title || file.basename,
-        description: fm.description || "",
+        title: typeof fm.title === "string" ? fm.title : file.basename,
+        description: typeof fm.description === "string" ? fm.description : "",
         date: fm.date ? String(fm.date) : "",
-        status: fm.status || "",
+        status: typeof fm.status === "string" ? fm.status : "",
         draft: fm.draft === true,
         track,
-        series: fm.series || "",
-        seriesOrder: fm.seriesOrder || "",
-        part: fm.part || "",
-        era: fm.era || "",
-        figures: fm.figures || "",
-        connects: fm.connects || "",
-        image: fm.image || "",
+        series: typeof fm.series === "string" ? fm.series : "",
+        seriesOrder: typeof fm.seriesOrder === "string" ? fm.seriesOrder : "",
+        part: typeof fm.part === "string" ? fm.part : "",
+        era: typeof fm.era === "string" ? fm.era : "",
+        figures: typeof fm.figures === "string" ? fm.figures : "",
+        connects: typeof fm.connects === "string" ? fm.connects : "",
+        image: typeof fm.image === "string" ? fm.image : "",
         tags,
         aliases,
-        publish: fm.publish as boolean | undefined,
-        order: fm.order as number | undefined,
+        publish: typeof fm.publish === "boolean" ? fm.publish : undefined,
+        order: typeof fm.order === "number" ? fm.order : undefined,
         validation,
       };
     } catch {

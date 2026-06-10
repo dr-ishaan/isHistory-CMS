@@ -33,8 +33,8 @@ export class IsHistorySettingTab extends PluginSettingTab {
         }
 
         private _debouncedRescan(delay = 600): void {
-                if (this._rescanTimer) clearTimeout(this._rescanTimer);
-                this._rescanTimer = setTimeout(() => {
+                if (this._rescanTimer) window.clearTimeout(this._rescanTimer);
+                this._rescanTimer = window.setTimeout(() => {
                         this.plugin.rescanCache();
                 }, delay);
         }
@@ -98,7 +98,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                 // ═══════════════════════════════════════════════════════════
                 //  CONTENT PATHS
                 // ═══════════════════════════════════════════════════════════
-                containerEl.createEl("h2", { text: "Content Paths" });
+                new Setting(containerEl).setName("Content Paths").setHeading();
                 containerEl.createEl("p", {
                         text: "Where your blog posts and research notes live inside the vault. These should match your Astro project's content folder structure.",
                         cls: "cms-settings-hint",
@@ -151,7 +151,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                 // ═══════════════════════════════════════════════════════════
                 //  TRACKS
                 // ═══════════════════════════════════════════════════════════
-                containerEl.createEl("h2", { text: "Tracks" });
+                new Setting(containerEl).setName("Tracks").setHeading();
                 containerEl.createEl("p", {
                         text: "Tracks organize your content by type. Each track has a short code (used in seriesOrder like A1, P3), a display name, an emoji, and a color. You can add, edit, or remove tracks to match your content categories.",
                         cls: "cms-settings-hint",
@@ -168,7 +168,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                                 )
                                 .addButton((btn) =>
                                         // Feature 2: Track deletion warning with orphan count
-                                        btn.setButtonText("Remove").setWarning().onClick(() => {
+                                        btn.setButtonText("Remove").setDestructive().onClick(() => {
                                                 const orphanCount = [...this.plugin.cache.items.values()].filter((i) => i.track === code).length;
                                                 if (orphanCount > 0) {
                                                         new TrackDeleteConfirmModal(this.app, this.plugin, code, info.name, orphanCount, () => {
@@ -203,7 +203,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                         .setName("Reset tracks to default")
                         .setDesc(`Restore the default tracks: ${Object.entries(DEFAULT_TRACKS).map(([c, i]) => `${i.emoji} ${i.name} (${c})`).join(", ")}`)
                         .addButton((btn) =>
-                                btn.setButtonText("Reset").setWarning().onClick(async () => {
+                                btn.setButtonText("Reset").setDestructive().onClick(async () => {
                                         this.plugin.settings.tracks = { ...DEFAULT_TRACKS };
                                         await this.plugin.saveSettings();
                                         this.plugin._updateDynamicStyles();
@@ -216,7 +216,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                 // ═══════════════════════════════════════════════════════════
                 //  STATUSES — tag/chip editor
                 // ═══════════════════════════════════════════════════════════
-                containerEl.createEl("h2", { text: "Post Statuses" });
+                new Setting(containerEl).setName("Post Statuses").setHeading();
                 containerEl.createEl("p", {
                         text: "Statuses describe the publication stage of a post (e.g. published, upcoming, planned). These appear as filter options and in the pre-flight settings.",
                         cls: "cms-settings-hint",
@@ -229,11 +229,13 @@ export class IsHistorySettingTab extends PluginSettingTab {
                         chip.createSpan({ text: status, cls: "cms-chip-text" });
                         const removeBtn = chip.createEl("button", { cls: "cms-chip-remove", attr: { "aria-label": `Remove ${status}` } });
                         removeBtn.setText("\u00D7");
-                        removeBtn.addEventListener("click", async () => {
-                                this.plugin.settings.statuses = this.plugin.settings.statuses.filter((s) => s !== status);
-                                await this.plugin.saveSettings();
-                                this._debouncedRescan();
-                                this.display();
+                        removeBtn.addEventListener("click", () => {
+                                void (async () => {
+                                        this.plugin.settings.statuses = this.plugin.settings.statuses.filter((s) => s !== status);
+                                        await this.plugin.saveSettings();
+                                        this._debouncedRescan();
+                                        this.display();
+                                })();
                         });
                 }
 
@@ -272,7 +274,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                         .setName("Reset statuses to default")
                         .setDesc(`Restore: ${[...DEFAULT_STATUSES].join(", ")}`)
                         .addButton((btn) =>
-                                btn.setButtonText("Reset").setWarning().onClick(async () => {
+                                btn.setButtonText("Reset").setDestructive().onClick(async () => {
                                         this.plugin.settings.statuses = [...DEFAULT_STATUSES];
                                         await this.plugin.saveSettings();
                                         this._debouncedRescan();
@@ -302,7 +304,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                 // ═══════════════════════════════════════════════════════════
                 //  VALIDATION RULES — number inputs with unit labels
                 // ═══════════════════════════════════════════════════════════
-                containerEl.createEl("h2", { text: "Validation Rules" });
+                new Setting(containerEl).setName("Validation Rules").setHeading();
                 containerEl.createEl("p", {
                         text: "These rules check your frontmatter for common mistakes. The plugin will flag titles and descriptions that are too short (errors) or too long (warnings). Adjust the thresholds to match your SEO requirements.",
                         cls: "cms-settings-hint",
@@ -377,7 +379,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                         );
 
                 // Required archive fields — tag/chip editor
-                containerEl.createEl("h3", { text: "Required archive fields", cls: "cms-section-subheading" });
+                new Setting(containerEl).setName("Required archive fields").setHeading();
                 containerEl.createEl("p", {
                         text: "These frontmatter fields must be present in every archive post. If a field is missing or empty, the validator will flag it as an error.",
                         cls: "cms-settings-hint",
@@ -389,11 +391,13 @@ export class IsHistorySettingTab extends PluginSettingTab {
                         chip.createSpan({ text: field, cls: "cms-chip-text" });
                         const removeBtn = chip.createEl("button", { cls: "cms-chip-remove", attr: { "aria-label": `Remove ${field}` } });
                         removeBtn.setText("\u00D7");
-                        removeBtn.addEventListener("click", async () => {
-                                this.plugin.settings.requiredArchiveFields = this.plugin.settings.requiredArchiveFields.filter((f) => f !== field);
-                                await this.plugin.saveSettings();
-                                this._debouncedRescan();
-                                this.display();
+                        removeBtn.addEventListener("click", () => {
+                                void (async () => {
+                                        this.plugin.settings.requiredArchiveFields = this.plugin.settings.requiredArchiveFields.filter((f) => f !== field);
+                                        await this.plugin.saveSettings();
+                                        this._debouncedRescan();
+                                        this.display();
+                                })();
                         });
                 }
 
@@ -429,7 +433,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                         .setName("Reset required fields to default")
                         .setDesc(`Restore: ${DEFAULT_SETTINGS.requiredArchiveFields.join(", ")}`)
                         .addButton((btn) =>
-                                btn.setButtonText("Reset").setWarning().onClick(async () => {
+                                btn.setButtonText("Reset").setDestructive().onClick(async () => {
                                         this.plugin.settings.requiredArchiveFields = [...DEFAULT_SETTINGS.requiredArchiveFields];
                                         await this.plugin.saveSettings();
                                         this._debouncedRescan();
@@ -440,7 +444,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                 // ═══════════════════════════════════════════════════════════
                 //  CARD DISPLAY — number inputs with context
                 // ═══════════════════════════════════════════════════════════
-                containerEl.createEl("h2", { text: "Card Display" });
+                new Setting(containerEl).setName("Card Display").setHeading();
                 containerEl.createEl("p", {
                         text: "Control how much information is shown on each card in the dashboard. Higher values show more detail but make the page longer.",
                         cls: "cms-settings-hint",
@@ -521,7 +525,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                 // ═══════════════════════════════════════════════════════════
                 //  NEW POST TEMPLATE — with variable insert buttons
                 // ═══════════════════════════════════════════════════════════
-                containerEl.createEl("h2", { text: "New Post Template" });
+                new Setting(containerEl).setName("New Post Template").setHeading();
                 containerEl.createEl("p", {
                         text: "Customize how new posts are created. Click the variable buttons below each field to insert placeholders that get filled in automatically when you create a new post.",
                         cls: "cms-settings-hint",
@@ -664,7 +668,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                 // ═══════════════════════════════════════════════════════════
                 //  PRE-FLIGHT SETTINGS — toggles and dropdowns
                 // ═══════════════════════════════════════════════════════════
-                containerEl.createEl("h2", { text: "Pre-flight Settings" });
+                new Setting(containerEl).setName("Pre-flight Settings").setHeading();
                 containerEl.createEl("p", {
                         text: "Pre-flight prepares a draft for publishing. When you click \"Pre-flight\" on a post, these settings determine what changes are made to the frontmatter.",
                         cls: "cms-settings-hint",
@@ -712,7 +716,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                         .setName("Reset pre-flight to default")
                         .setDesc("Restore: draft=false, status=published, auto-fill date=true")
                         .addButton((btn) =>
-                                btn.setButtonText("Reset").setWarning().onClick(async () => {
+                                btn.setButtonText("Reset").setDestructive().onClick(async () => {
                                         this.plugin.settings.preflightDraft = DEFAULT_SETTINGS.preflightDraft;
                                         this.plugin.settings.preflightStatus = DEFAULT_SETTINGS.preflightStatus;
                                         this.plugin.settings.preflightAutoDate = DEFAULT_SETTINGS.preflightAutoDate;
@@ -724,7 +728,7 @@ export class IsHistorySettingTab extends PluginSettingTab {
                 // ═══════════════════════════════════════════════════════════
                 //  APPEARANCE
                 // ═══════════════════════════════════════════════════════════
-                containerEl.createEl("h2", { text: "Appearance" });
+                new Setting(containerEl).setName("Appearance").setHeading();
 
                 new Setting(containerEl)
                         .setName("Show ribbon icon")
@@ -740,18 +744,17 @@ export class IsHistorySettingTab extends PluginSettingTab {
                 // ═══════════════════════════════════════════════════════════
                 //  DEPLOY HINT
                 // ═══════════════════════════════════════════════════════════
-                containerEl.createEl("h2", { text: "Deploying to Your Site" });
+                new Setting(containerEl).setName("Deploying to Your Site").setHeading();
                 new Setting(containerEl)
                         .setName("Git sync required")
                         .setDesc("This plugin manages frontmatter and validation. To deploy changes to your Astro site, use Obsidian Git or your preferred Git sync method.")
                         .addButton((btn) =>
                                 btn.setButtonText("Open Obsidian Git").setCta().onClick(() => {
-                                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                        const appAny = this.app as any;
-                                        const gitPlugin = appAny.plugins?.plugins?.["obsidian-git"];
-                                        if (gitPlugin) {
-                                                appAny.setting?.open();
-                                                appAny.setting?.openTabById("obsidian-git");
+                                        const appWithPlugins = this.app as unknown as { plugins?: { plugins?: Record<string, { manifest?: { id?: string } }> }; setting?: { open: () => void; openTabById: (id: string) => void } };
+                                        const gitPlugin = appWithPlugins.plugins?.plugins?.["obsidian-git"];
+                                        if (gitPlugin && appWithPlugins.setting) {
+                                                appWithPlugins.setting.open();
+                                                appWithPlugins.setting.openTabById("obsidian-git");
                                         } else {
                                                 window.open("https://github.com/Vinzent03/obsidian-git", "_blank");
                                         }

@@ -4,6 +4,9 @@
    v1.7.0: Mobile-responsive layout, accessibility, differential rendering.
    ═════════════════════════════════════════════════════════════════════════ */
 
+/* ─── Utility Classes ─── */
+.cms-hidden { display: none; }
+
 /* ─── Theme Colors (non-track) ─── */
 :root {
     --ish-vault: #6366f1;     /* Vault — Indigo */
@@ -107,11 +110,11 @@
 .cms-card-title { font-weight: 600; font-size: 0.92em; color: var(--text-normal); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cms-card-badges { display: flex; gap: 4px; flex-shrink: 0; }
 
-/* Series Order Code (base style — per-track colors injected dynamically) */
+/* Series Order Code (base style — per-track colors via CSS variables) */
 .cms-card-code {
     display: inline-block; padding: 2px 6px; border-radius: 4px;
     font-size: 0.72em; font-weight: 700; letter-spacing: 0.03em;
-    background: rgba(124, 58, 237, 0.15); color: var(--ish-track-a, #7c3aed);
+    background: var(--ish-track-code-bg, rgba(124, 58, 237, 0.15)); color: var(--ish-track-code-color, var(--ish-track-a, #7c3aed));
     font-family: var(--font-monospace);
 }
 
@@ -432,3 +435,31 @@
 .cms-preflight-errors li {
     margin-bottom: 2px;
 }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   Dynamic Track Colors (set via CSS variables on :root from JS)
+   Per-track code badges use --ish-track-{code}-bg and --ish-track-{code}-color
+   Per-track card borders use --ish-track-{code}
+   Per-track stat values use --ish-track-{code}
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* Card tags and tag chips use primary track color via CSS variables */
+.cms-card-tag { background: var(--ish-tag-bg, rgba(124, 58, 237, 0.1)); color: var(--ish-tag-color, var(--ish-track-a, #7c3aed)); }
+.cms-tag-chip { background: var(--ish-tag-chip-bg, rgba(124, 58, 237, 0.08)); color: var(--ish-tag-chip-color, var(--ish-track-a, #7c3aed)); }
+
+/* ─── Per-track dynamic styles (driven by --ish-track-{code} CSS variables set on :root) ─── */
+
+/* Track A (default) */
+.cms-card-code-a { background: var(--ish-track-a-bg, rgba(124, 58, 237, 0.15)); color: var(--ish-track-a-color, #7c3aed); }
+.cms-card.cms-card-track-A { border-left-color: var(--ish-track-a-border, #7c3aed); }
+.cms-stat-track-a .cms-stat-value { color: var(--ish-track-a-stat-color, #7c3aed); }
+
+/* Track P */
+.cms-card-code-p { background: var(--ish-track-p-bg, rgba(59, 130, 246, 0.15)); color: var(--ish-track-p-color, #3b82f6); }
+.cms-card.cms-card-track-P { border-left-color: var(--ish-track-p-border, #3b82f6); }
+.cms-stat-track-p .cms-stat-value { color: var(--ish-track-p-stat-color, #3b82f6); }
+
+/* Track E */
+.cms-card-code-e { background: var(--ish-track-e-bg, rgba(245, 158, 11, 0.15)); color: var(--ish-track-e-color, #f59e0b); }
+.cms-card.cms-card-track-E { border-left-color: var(--ish-track-e-border, #f59e0b); }
+.cms-stat-track-e .cms-stat-value { color: var(--ish-track-e-stat-color, #f59e0b); }
