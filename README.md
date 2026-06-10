@@ -24,6 +24,9 @@ Here's what you get:
 | **Sort & filter** | Find posts fast with sort options, search, and filters |
 | **Context menus** | Right-click files for quick validate and pre-flight actions |
 | **Safe upgrades** | Settings automatically merge when you update — nothing is lost |
+| **Mobile support** | Responsive dashboard that works on Obsidian Mobile |
+| **Accessibility** | ARIA labels, keyboard navigation, and screen reader support |
+| **Differential rendering** | Only changed cards update — fast even with hundreds of posts |
 
 ---
 
@@ -190,6 +193,7 @@ The plugin checks your posts and shows you exactly what's wrong. Here are the mo
 | Missing title | No `title` field in frontmatter | Add `title: "Your Title"` |
 | Missing date | No `date` field | Add `date: 2026-05-28` |
 | Bad date format | Date is not in YYYY-MM-DD format | Use `2026-05-28` not `May 28, 2026` |
+| Future date | Date is set in the future | Use a current or past date |
 | Tags not a list | `tags` is a string instead of a list | Use `["tag1", "tag2"]` not `"tag1, tag2"` |
 | Aliases not a list | `aliases` is a string instead of a list | Use `["A1"]` not `"A1"` |
 | Has series but no order | `series` is set but `seriesOrder` is missing | Add `seriesOrder: "A1"` |
@@ -198,6 +202,7 @@ The plugin checks your posts and shows you exactly what's wrong. Here are the mo
 | Invalid track code | `track` is not one of your defined tracks | Use a track code from Settings |
 | seriesOrder track mismatch | `seriesOrder` starts with a different track letter than `track` | Make them match |
 | Profile missing figures | A Profile-track post has no `figures` field | Add `figures: "Person Name"` |
+| Invalid connects reference | `connects` has references that don't match the track+number format | Use format like `"A1, P5, E3"` |
 
 ---
 
@@ -359,6 +364,17 @@ The settings page shows warnings when:
 ---
 
 ## Version History
+
+### v1.7.0 — Mobile & Performance
+- **Mobile-Optimized Dashboard** — Responsive layout that adapts to Obsidian Mobile and smaller screens
+- **Accessibility Improvements** — ARIA labels on all interactive elements, keyboard-navigable controls, screen reader-friendly status badges
+- **Differential Rendering Engine** — Fingerprint-based card updates that only re-render changed cards, not the entire dashboard
+- **YAML Shorthand Tolerance** — Bare string tags and aliases (e.g. `tags: ai-history` instead of `tags: [ai-history]`) are now normalized without errors
+- **Boundary-Aware Path Detection** — Prevents false collection matches (e.g. `src/content/blog-vault/` no longer matches the archive path `src/content/blog`)
+- **Connects Cross-Reference Validation** — Warns when `connects` references don't follow the track+number format (e.g. `A1, P5, E3`)
+- **Future Date Warning** — Flags posts with publication dates set in the future
+- **Comprehensive Test Suite** — Full unit test coverage for validation, caching, sorting, and filtering with Vitest
+- **Auto Settings Migration** — Seamless upgrade from any previous version; deep-merge preserves all user settings
 
 ### v1.6.0 — Trust & Workflow
 - **Pre-flight Validation Gate** — Warns about errors before publishing

@@ -2,8 +2,8 @@
  * isHistory CMS Plugin — Dashboard View
  *
  * Full content management UI with differential rendering.
- * v1.6.0: Sort options dropdown, recently modified filter,
- * search debounce for better performance with many cards.
+ * v1.7.0: Mobile-responsive layout, accessibility improvements,
+ * differential rendering with fingerprint-based updates.
  */
 
 import { ItemView, type WorkspaceLeaf, Notice, Modal, TFile } from "obsidian";

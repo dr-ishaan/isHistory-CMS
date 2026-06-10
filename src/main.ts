@@ -3,8 +3,8 @@
  *
  * Orchestrates all plugin components: cache, views, commands,
  * settings, and shared operations.
- * v1.6.0: Pre-flight validation gate, status bar health indicator,
- * context menus, deep-merge settings, save failure notices.
+ * v1.7.0: Mobile-responsive dashboard, accessibility improvements,
+ * differential rendering, YAML shorthand tolerance, boundary-aware paths.
  */
 
 import { Plugin, Notice, Modal, TFile, type Menu } from "obsidian";

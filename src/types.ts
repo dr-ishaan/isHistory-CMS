@@ -2,8 +2,8 @@
  * isHistory CMS Plugin — Type Definitions
  *
  * Central type declarations shared across all modules.
- * v1.5.0: Fully dynamic tracks, statuses, validation thresholds,
- * display limits, template engine, and pre-flight configuration.
+ * v1.7.0: Mobile-responsive types, accessibility, differential rendering,
+ * YAML shorthand tolerance, boundary-aware path detection.
  */
 
 import { TFile } from "obsidian";
@@ -139,7 +139,7 @@ export interface CacheStats {
 
 // ─── Settings ───
 
-export const SETTINGS_VERSION = 8;
+export const SETTINGS_VERSION = 9;
 
 export interface IsHistorySettings {
   _version: number;

@@ -4,8 +4,8 @@
  * Validates frontmatter for archive and vault collections
  * against the content schema. All rules are pure functions
  * with clear inputs and outputs for testability.
- * v1.5.0: Fully parameterized — all thresholds and track/status
- * values come from ValidationConfig, not hardcoded constants.
+ * v1.7.0: Future date warning, connects cross-reference validation,
+ * YAML shorthand tolerance, boundary-aware collection detection.
  */
 
 import {

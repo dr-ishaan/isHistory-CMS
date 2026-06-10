@@ -2,8 +2,8 @@
  * isHistory CMS Plugin — Content Cache
  *
  * Dual-collection, incremental content index.
- * v1.5.0: Fully dynamic tracks, statuses, and regex patterns
- * derived from settings rather than hardcoded constants.
+ * v1.7.0: Boundary-aware path detection, fingerprint-based caching,
+ * YAML shorthand normalization, comprehensive test coverage.
  */
 
 import { type App, type TFile } from "obsidian";
