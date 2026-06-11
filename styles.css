@@ -197,9 +197,9 @@
 .cms-settings-hint {
     margin: -8px 0 12px 0; font-size: 0.85em; color: var(--text-faint); line-height: 1.4;
 }
-.cms-raw-item {
-    padding: 0 !important;
-    border-bottom: none !important;
+.setting-item.cms-raw-item {
+    padding: 0;
+    border-bottom: none;
 }
 
 /* ═════════════════════════════════════════════════════════════════════════
